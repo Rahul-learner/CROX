@@ -1,5 +1,0 @@
-/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm-install/pioasm/pioasm
-/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm-install/pioasm/pioasmTargets.cmake
-/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm-install/pioasm/pioasmTargets-release.cmake
-/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm-install/pioasm/pioasmConfig.cmake
-/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm-install/pioasm/pioasmConfigVersion.cmake
