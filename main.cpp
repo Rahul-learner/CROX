@@ -148,7 +148,7 @@ int main() {
     //HMC5883L hmc5883l;
     ReadPWM receiver;
     WritePWM motor;
-    Buzzer fc_buzzer(21);
+    Buzzer fc_buzzer(15);
 
     fc_buzzer.init();
     fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
@@ -180,8 +180,7 @@ int main() {
     //calibrate_receiver(receiver, rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
     printf("Receiver Calibrated: roll_bias: %f, pitch_bias: %f, yaw_bias: %f\n", rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
     bool esc_calibration = false;
-    //sleep_ms(5000);
-    //run_noise_calibration(mpu6050, hmc5883l, motor);
+
     bool tune_EKF = false;
     if (tune_EKF) {
       while (!stdio_usb_connected()) {
@@ -290,9 +289,9 @@ int main() {
 
                 if ((end - last_print_update) > 1000000/100) {
                     gz = gz * 180.0f / 3.14159265358979323846f; 
-                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
+                    printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
                     // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
-                    printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
+                    // printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
                     last_print_update = end;
                 }
 
