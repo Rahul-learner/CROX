@@ -13,6 +13,7 @@
 #include "readPWM.h"
 #include "writePWM.h"
 #include "PID.h"
+#include "buzzer.h"
 //#include "telemetry.h"
 //#include "calibration.h"
 
