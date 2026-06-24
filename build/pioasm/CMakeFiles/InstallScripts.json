@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,0 +1,27 @@
+.program PwmIn
+
+; Measures PWM high time and period using countdown from 0xFFFFFFFF
+; ISR1: pulse width
+; ISR2: full period
+
+.wrap_target
+
+wait_low:
+    jmp pin wait_low         ; wait for pin to go LOW
+wait_rise:
+    jmp pin continue_rise    ; if pin is HIGH, continue
+    jmp wait_rise            ; else loop
+continue_rise:
+    mov x ~null              ; start counter at 0xFFFFFFFF
+
+count_high:
+    jmp x-- still_high       ; decrement x
+    jmp stop                 ; safety timeout
+still_high:
+    jmp pin count_high       ; stay in loop while pin is HIGH
+    jmp stop                 ; if pin LOW, stop
+
+stop:
+    mov isr, x
+    push noblock             ; push inverse pulse width
+.wrap

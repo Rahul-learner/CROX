@@ -1,0 +1,7 @@
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/pioasm.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/edit_cache.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/rebuild_cache.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/list_install_components.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/install.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/install/local.dir
+/mnt/Vol_B/HobbyProject/DroneFC/RP2350/build/pioasm/CMakeFiles/install/strip.dir

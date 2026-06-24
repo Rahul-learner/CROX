@@ -1,4 +1,3 @@
-// Include necessary Raspberry Pi Pico SDK headers
 #include <stdio.h>        // For standard input/output functions like printf
 #include "pico/stdio_usb.h"
 #include <math.h>         // For mathematical functions like atan2, asin, sqrt
@@ -13,8 +12,9 @@
 #include "readPWM.h"
 #include "writePWM.h"
 #include "PID.h"
-//#include "telemetry.h"
-//#include "calibration.h"
+#include "buzzer.h"
+// #include "telemetry.h"
+// #include "calibration.h"
 
 
 // --- Define the GPIO pin for the onboard LED ---
@@ -40,14 +40,14 @@ volatile bool new_data_ready = false; // Flag set by interrupt handler
 // Global variable for tracking time for filter
 static uint64_t last_update_us = 0;
 
-// --- MPU6000 Interrupt handler --- 
+// --- BMI160 Interrupt handler ---
 void mpu_isr(uint gpio, uint32_t events) {
     if (gpio == MPU_INT_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
         new_data_ready = true; // Set flag to process data in main loop
     }
 }
 
-void record_readings_for_SITL(MPU6500& imu) {
+void record_readings_for_SITL(BMI160& imu) {
   #pragma pack(push, 1)
   struct Readings {
     uint8_t header1;
@@ -118,7 +118,6 @@ void record_readings_for_SITL(MPU6500& imu) {
 
 float roll_control_output = 0.0f, pitch_control_output = 0.0f, yaw_control_output = 0.0f;
 
-
 int main() {
     sleep_ms(100);
     // --- Overclock the CPU to 250 MHz ---
@@ -129,7 +128,8 @@ int main() {
     sleep_ms(3000);
     printf("Started...\n");
     printf("Pico started!\n");
-    printf("CPU Frequency: %lu kHz\n", clock_get_hz(clk_sys) / 1000);
+    printf("CPU Frequency: %i kHz\n", clock_get_hz(clk_sys) / 1000);
+
 
     // --- Launch Core1 Telemetry ---
     //Telemetry telemetry;
@@ -144,34 +144,33 @@ int main() {
     PIDController yaw_pid(0.0f, 0.0f, 0.0f);
 
     // --- Initialize Class ---
-    MPU6500 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
+    BMI160 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
     //HMC5883L hmc5883l;
     ReadPWM receiver;
     WritePWM motor;
-    Buzzer fc_buzzer(15);
+    Buzzer fc_buzzer(21);
 
     fc_buzzer.init();
-
+    fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
 
     // --- Configure MPU6000 Interrupt Pin ---
     gpio_init(MPU_INT_PIN);
     gpio_set_dir(MPU_INT_PIN, GPIO_IN);
-    gpio_pull_up(MPU_INT_PIN); // MPU6500 INT pin is active low, so pull-up is needed
+    gpio_pull_up(MPU_INT_PIN); // BMI160 INT pin is active low, so pull-up is needed
     gpio_set_irq_enabled_with_callback(MPU_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &mpu_isr);
-    printf("MPU6000 Interrupt configured on GP%d.\n", MPU_INT_PIN);
+    printf("BMI160 Interrupt configured on GP%d.\n", MPU_INT_PIN);
 
     // --- Configure ---
-    if (!imu.checkConnection()) {
-        printf("SYSTEM HALTED. Please check your SPI wiring and power.\n");
-
-        // Infinite Panic Loop - prevents the drone from flying blind
+    if (imu.checkConnection()) {
+        printf("BMI160 detected! Initializing sensors...\n");
+        imu.init();
+        printf("BMI160 configured for 3200Hz.\n");
+    } else {
+        printf("ERROR: BMI160 not found. Check wiring!\n");
         while (true) {
-            // Optional: If you have an LED wired up, flash it rapidly here
-            // to visually indicate a hardware failure.
-            sleep_ms(100);
-        }
+            fc_buzzer.play_melody(Tunes::error_sensor, Tunes::error_sensor_len);
+            sleep_ms(1000); } // Halt execution
     }
-    imu.init();
 
     // Initialize the Filter
     QuaternionEKF filter;
@@ -207,6 +206,8 @@ int main() {
     float roll_bias = 0.0f, pitch_bias = 0.0f;
     uint32_t loop_counter = 0;
 
+
+    fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
     // --- Main Loop ---
     while (true) {
 
@@ -264,9 +265,9 @@ int main() {
                 imu.readData(&ax, &ay, &az, &gx, &gy, &gz);
 
                 // Execute the Filter
-                filter.predict(gx, gy, gz, dt, 0.00001f, 0.000001f);
+                filter.predict(gx, gy, gz, dt, 0.001f, 0.00001f);
                 if (run_accel_update) {
-                    filter.update(ax, ay, az, 2.0f);
+                    filter.update(ax, ay, az, 1.5f);
                 }
                 run_accel_update = !run_accel_update;
 
@@ -275,13 +276,12 @@ int main() {
                     filter.getEulerAngles(roll, pitch, yaw);
                     filter.get_clean_rates(gz, yaw_rate);
                     // get the setpoint
-                    // roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt);
-                    // pitch_control_output = pitch_pid.compute(receiver_pwm[1], pitch, dt);
-                    // yaw_control_output = yaw_pid.compute(receiver_pwm[3], yaw_rate, dt);
+                    roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt);
+                    pitch_control_output = pitch_pid.compute(receiver_pwm[1], pitch, dt);
+                    yaw_control_output = yaw_pid.compute(receiver_pwm[3], yaw_rate, dt);
 
                     // Motor PWM output
-                    // motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
-                    //mpu6050.mpu6050_send_raw();
+                    motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
 
                 }
 
@@ -289,12 +289,12 @@ int main() {
                 float dt_s = (end - start) / 1000000.0f;
 
                 if ((end - last_print_update) > 1000000/100) {
-                    printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, dt, dt_s);
+                    gz = gz * 180.0f / 3.14159265358979323846f; 
+                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
+                    // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
+                    printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
                     last_print_update = end;
                 }
-
-                //printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
-
 
             }
 
