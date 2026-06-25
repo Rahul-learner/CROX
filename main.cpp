@@ -1,3 +1,4 @@
+#include <hardware/timer.h>
 #include <stdio.h>        // For standard input/output functions like printf
 #include "pico/stdio_usb.h"
 #include <math.h>         // For mathematical functions like atan2, asin, sqrt
@@ -13,7 +14,7 @@
 #include "writePWM.h"
 #include "PID.h"
 #include "buzzer.h"
-// #include "telemetry.h"
+#include "nrf24_radio.h"
 // #include "calibration.h"
 
 
@@ -46,6 +47,22 @@ void mpu_isr(uint gpio, uint32_t events) {
         new_data_ready = true; // Set flag to process data in main loop
     }
 }
+
+// SPI communication for nRF24 Transceiver
+#define RADIO_SPI_PORT spi1
+#define RADIO_CE 14
+#define RADIO_CSN 13
+#define RADIO_SCK 10
+#define RADIO_MOSI 11
+#define RADIO_MISO 12
+
+// 5 byte address (Drone and Ground Station Must be Flipped)
+const uint8_t drone_tx_addr[5] = "GRND1"; // Sending to Ground
+const uint8_t drone_rx_addr[5] = "DRON1"; // Receiving from Ground
+
+// Global structs for telemetry
+TelemetryPacket telemetry;
+PIDTuningPacket new_pids;
 
 void record_readings_for_SITL(BMI160& imu) {
   #pragma pack(push, 1)
@@ -145,6 +162,7 @@ int main() {
 
     // --- Initialize Class ---
     BMI160 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
+    NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
     //HMC5883L hmc5883l;
     ReadPWM receiver;
     WritePWM motor;
@@ -152,6 +170,11 @@ int main() {
 
     fc_buzzer.init();
     fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
+
+    radio.init();
+    radio.setAddresses(drone_tx_addr, drone_rx_addr);
+    radio.startListening();
+    uint32_t last_telemetry_time = time_us_32();
 
     // --- Configure MPU6000 Interrupt Pin ---
     gpio_init(MPU_INT_PIN);
@@ -196,6 +219,7 @@ int main() {
 
     // Re-initialize last_update_us after settling
     last_update_us = time_us_64();
+    last_telemetry_time = time_us_32();
     uint64_t last_pwm_update = time_us_64();
     uint64_t last_print_update = time_us_64();
     bool first_throttle_on = true;
@@ -206,7 +230,6 @@ int main() {
     uint32_t loop_counter = 0;
 
 
-    fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
     // --- Main Loop ---
     while (true) {
 
@@ -223,16 +246,20 @@ int main() {
             //telemetry.send_telemetry(roll, pitch, yaw_rate, dt, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], 0.0f, 0.0f, 0.0f);
             last_pwm_update = current_pwm_update;
         }
-        receiver_pwm[2] = 1006.0f;
+        // receiver_pwm[2] = 1006.0f;
         if (receiver_pwm[2] > 1005.0f) {
             if (first_throttle_on) {
+                fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
+
                 while (receiver_pwm[2] > 1051.0f) {
                     motor.reset();
+                    fc_buzzer.play_tone(1);
                     printf("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
                     gpio_put(PICO_DEFAULT_LED_PIN, 1);
                     sleep_ms(200);
                     receiver.read_throttle(receiver_pwm[2]);
                     gpio_put(PICO_DEFAULT_LED_PIN, 0);
+                    fc_buzzer.stop();
                     sleep_ms(200);
                 }
                 first_throttle_on = false;
@@ -271,7 +298,7 @@ int main() {
                 run_accel_update = !run_accel_update;
 
 
-                if (loop_counter % 16 == 0) {
+                if (loop_counter % 64 == 0) {
                     filter.getEulerAngles(roll, pitch, yaw);
                     filter.get_clean_rates(gz, yaw_rate);
                     // get the setpoint
@@ -287,6 +314,14 @@ int main() {
                 uint64_t end = time_us_64();
                 float dt_s = (end - start) / 1000000.0f;
 
+                if ((end - last_telemetry_time) > 50000) {
+                    last_telemetry_time = end;
+                    telemetry.roll = roll;
+                    telemetry.pitch = pitch;
+
+                    radio.sendTelemetry(&telemetry);
+                }
+
                 if ((end - last_print_update) > 1000000/100) {
                     gz = gz * 180.0f / 3.14159265358979323846f; 
                     printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
@@ -299,7 +334,11 @@ int main() {
 
         } else {
             motor.reset();
-            //telemetry.process_incoming_config(roll_pid, pitch_pid, yaw_pid, roll_bias, pitch_bias);
+            if (radio.dataAvailable()) {
+                radio.readPID(&new_pids);
+
+                printf("New Pid Gains Received!\n");
+            }
             roll_pid.reset();
             pitch_pid.reset();
             yaw_pid.reset();
