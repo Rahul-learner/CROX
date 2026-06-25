@@ -8,12 +8,12 @@ private:
     // --- MOTOR CONFIG ---
     //gpio_motor1 = 2 front left, clockwise
     //gpio_motor2 = 3 front right, counter clockwise
-    //gpio_motor3 = 4 rear left, counter clockwise
-    //gpio_motor4 = 5 rear right, clockwise
+    //gpio_motor3 = 5 rear left, counter clockwise
+    //gpio_motor4 = 4 rear right, clockwise
     #define MOTOR1_PWM_PIN 2 // Example: GP2 (PWM Slice 0, Channel A)
     #define MOTOR2_PWM_PIN 3 // Example: GP3 (PWM Slice 0, Channel B)
-    #define MOTOR3_PWM_PIN 4 // Example: GP4 (PWM Slice 1, Channel A)
-    #define MOTOR4_PWM_PIN 5 // Example: GP5 (PWM Slice 1, Channel B)
+    #define MOTOR3_PWM_PIN 5 // Example: GP4 (PWM Slice 1, Channel A)
+    #define MOTOR4_PWM_PIN 4 // Example: GP5 (PWM Slice 1, Channel B)
     #define PWM_FREQUENCY_HZ 490
     #define PWM_WRAP_VALUE 2040 // For 490Hz, Period = 1,000,000 / 490 = 2040
     #define ESC_MIN_PULSE_US 1000
