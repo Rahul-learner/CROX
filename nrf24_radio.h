@@ -1,26 +1,52 @@
-#pragma once
+#ifndef NRF24_TELEMETRY_H
+#define NRF24_TELEMETRY_H
+
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include <stdio.h>
 
-// --- THE DATA PACKETS (Max 32 Bytes) ---
+// --- PACKET HEADERS ---
+#define TELEMETRY_HEADER_1 0xAA
+#define TELEMETRY_HEADER_2 0x55
+#define PID_HEADER_1       0xBB
+#define PID_HEADER_2       0x66
 
-// Sent from Drone -> Ground Station (16 bytes)
+#pragma pack(push, 1) // Prevent compiler from adding padding bytes
+
+// Sent from Drone -> Ground Station (23 bytes)
 struct TelemetryPacket {
-    float roll;
-    float pitch;
-    float yaw;
-    float battery_v;
+    uint8_t header1;
+    uint8_t header2;
+    int16_t roll;      // degrees * 100
+    int16_t pitch;     // degrees * 100
+    int16_t yaw;       // degrees * 100
+    int16_t rc_roll;   // raw stick values
+    int16_t rc_pitch;
+    int16_t rc_yaw;
+    int16_t pid_roll;  // raw motor correction output
+    int16_t pid_pitch;
+    int16_t pid_yaw;
+    uint16_t dt_us;    // delta time in microseconds
+    uint8_t checksum;
 };
 
-// Received from Ground Station -> Drone (24 bytes)
+// Received from Ground Station -> Drone (21 bytes)
 struct PIDTuningPacket {
-    float kp_roll;
-    float ki_roll;
-    float kd_roll;
-    float kp_pitch;
-    float ki_pitch;
-    float kd_pitch;
+    uint8_t header1;
+    uint8_t header2;
+    int16_t kp_roll;   // gains * 1000
+    int16_t ki_roll;
+    int16_t kd_roll;
+    int16_t kp_pitch;
+    int16_t ki_pitch;
+    int16_t kd_pitch;
+    int16_t kp_yaw;
+    int16_t ki_yaw;
+    int16_t kd_yaw;
+    uint8_t checksum;
 };
+
+#pragma pack(pop)
 
 class NRF24 {
 private:
@@ -76,7 +102,7 @@ private:
 
 public:
     NRF24(spi_inst_t* spi_port, uint ce, uint csn, uint sck, uint mosi, uint miso)
-        : spi(spi_port), ce_pin(ce), csn_pin(csn) {
+    : spi(spi_port), ce_pin(ce), csn_pin(csn) {
 
         gpio_set_function(sck, GPIO_FUNC_SPI);
         gpio_set_function(mosi, GPIO_FUNC_SPI);
@@ -91,26 +117,37 @@ public:
         csn_high();
     }
 
+    bool checkConnection() {
+        spi_init(spi, 2000 * 1000);
+        spi_set_format(spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+        sleep_ms(10);
+
+        uint8_t test_channel = 88;
+        writeReg(RF_CH, test_channel);
+        sleep_ms(2);
+        uint8_t response = readReg(RF_CH);
+
+        return (response == test_channel);
+    }
+
     void init() {
-        // NRF24 max SPI speed is 10MHz. 2MHz is very stable.
         spi_init(spi, 2000 * 1000);
         spi_set_format(spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
         sleep_ms(100);
 
-        // Power on, enable CRC
         writeReg(CONFIG, 0x0A);
         sleep_ms(5);
 
-        writeReg(EN_AA, 0x01);       // Enable Auto-ACK on pipe 0
-        writeReg(SETUP_RETR, 0x2F);  // 750us delay, 15 retries
-        writeReg(RF_CH, 76);         // Channel 76 (Out of WiFi range)
-        writeReg(RF_SETUP, 0x07);    // 1Mbps, Max Power (0dBm)
+        writeReg(EN_AA, 0x01);
+        writeReg(SETUP_RETR, 0x2F);
+        writeReg(RF_CH, 76);
+        writeReg(RF_SETUP, 0x07);
 
-        // Setup payload sizes (32 bytes max)
-        writeReg(RX_PW_P0, sizeof(PIDTuningPacket));
+        // Ground Station usually expects Telemetry sizes, Drone expects PID sizes
+        // We set to max 32 to safely cover both
+        writeReg(RX_PW_P0, 32);
     }
 
-    // Set communication addresses (Match these exactly on your Ground Station!)
     void setAddresses(const uint8_t* tx_addr, const uint8_t* rx_addr) {
         csn_low();
         uint8_t cmd_tx = W_REG | TX_ADDR;
@@ -126,39 +163,42 @@ public:
     }
 
     void startListening() {
-        writeReg(CONFIG, readReg(CONFIG) | 0x01); // Set PRX bit
+        writeReg(CONFIG, readReg(CONFIG) | 0x01);
         writeCmd(FLUSH_RX);
-        writeReg(STATUS, 0x70); // Clear interrupts
-        ce_high(); // Activate antenna to listen
+        writeReg(STATUS, 0x70);
+        ce_high();
         sleep_us(130);
     }
 
     void stopListening() {
         ce_low();
-        writeReg(CONFIG, readReg(CONFIG) & ~0x01); // Clear PRX bit (Sets PTX)
+        writeReg(CONFIG, readReg(CONFIG) & ~0x01);
         writeCmd(FLUSH_TX);
     }
 
-    // Returns true if new PID data is waiting for us
     bool dataAvailable() {
         uint8_t status = readReg(STATUS);
-        if (status & 0x40) { // RX_DR bit set
-            writeReg(STATUS, 0x40); // Clear bit
+        if (status & 0x40) {
+            writeReg(STATUS, 0x40);
             return true;
         }
         return false;
     }
 
-    void readPID(PIDTuningPacket* data) {
-        csn_low();
-        uint8_t cmd = RX_PAYLOAD;
-        spi_write_blocking(spi, &cmd, 1);
-        spi_read_blocking(spi, 0x00, (uint8_t*)data, sizeof(PIDTuningPacket));
-        csn_high();
-    }
+    // ==========================================================
+    // DRONE FUNCTIONS
+    // ==========================================================
 
-    // Send telemetry to the ground
+    // (Drone -> Ground)
     bool sendTelemetry(TelemetryPacket* data) {
+        data->header1 = TELEMETRY_HEADER_1;
+        data->header2 = TELEMETRY_HEADER_2;
+
+        uint8_t calc_cs = 0;
+        uint8_t* ptr = (uint8_t*)data;
+        for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
+        data->checksum = calc_cs;
+
         stopListening();
 
         csn_low();
@@ -167,23 +207,109 @@ public:
         spi_write_blocking(spi, (uint8_t*)data, sizeof(TelemetryPacket));
         csn_high();
 
-        ce_high(); // Pulse CE to transmit
+        ce_high();
         sleep_us(15);
         ce_low();
 
-        // Non-blocking timeout wait for Auto-Ack
         uint32_t start_time = time_us_32();
         uint8_t status;
         while (true) {
             status = readReg(STATUS);
-            if (status & 0x20) break; // TX_DS (Success)
-            if (status & 0x10) break; // MAX_RT (Failed/No Ack)
-            if (time_us_32() - start_time > 10000) break; // 10ms timeout
+            if (status & 0x20 || status & 0x10) break;
+            if (time_us_32() - start_time > 10000) break;
         }
 
-        writeReg(STATUS, 0x30); // Clear TX interrupts
-        startListening(); // Immediately go back to listening for PID tuning
+        writeReg(STATUS, 0x30); // Clear interrupts
 
-        return (status & 0x20); // Return true if ground station acknowledged
+        // --- BUG FIX: Clear stuck packets if MAX_RT triggered! ---
+        if (status & 0x10) {
+            writeCmd(FLUSH_TX);
+        }
+
+        startListening();
+
+        return (status & 0x20);
+    }
+
+    // (Drone <- Ground)
+    bool readPID(PIDTuningPacket* data) {
+        csn_low();
+        uint8_t cmd = RX_PAYLOAD;
+        spi_write_blocking(spi, &cmd, 1);
+        spi_read_blocking(spi, 0x00, (uint8_t*)data, sizeof(PIDTuningPacket));
+        csn_high();
+
+        if (data->header1 != PID_HEADER_1 || data->header2 != PID_HEADER_2) return false;
+
+        uint8_t calc_cs = 0;
+        uint8_t* ptr = (uint8_t*)data;
+        for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
+
+        return (calc_cs == data->checksum);
+    }
+
+    // ==========================================================
+    // GROUND STATION FUNCTIONS
+    // ==========================================================
+
+    // (Ground -> Drone)
+    bool sendPID(PIDTuningPacket* data) {
+        data->header1 = PID_HEADER_1;
+        data->header2 = PID_HEADER_2;
+
+        uint8_t calc_cs = 0;
+        uint8_t* ptr = (uint8_t*)data;
+        for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
+        data->checksum = calc_cs;
+
+        stopListening();
+
+        csn_low();
+        uint8_t cmd = TX_PAYLOAD;
+        spi_write_blocking(spi, &cmd, 1);
+        spi_write_blocking(spi, (uint8_t*)data, sizeof(PIDTuningPacket));
+        csn_high();
+
+        ce_high();
+        sleep_us(15);
+        ce_low();
+
+        uint32_t start_time = time_us_32();
+        uint8_t status;
+        while (true) {
+            status = readReg(STATUS);
+            if (status & 0x20 || status & 0x10) break;
+            if (time_us_32() - start_time > 10000) break;
+        }
+
+        writeReg(STATUS, 0x30); // Clear interrupts
+
+        // --- BUG FIX: Clear stuck packets if MAX_RT triggered! ---
+        if (status & 0x10) {
+            writeCmd(FLUSH_TX);
+        }
+
+        startListening();
+
+        return (status & 0x20);
+    }
+
+    // (Ground <- Drone)
+    bool readTelemetry(TelemetryPacket* data) {
+        csn_low();
+        uint8_t cmd = RX_PAYLOAD;
+        spi_write_blocking(spi, &cmd, 1);
+        spi_read_blocking(spi, 0x00, (uint8_t*)data, sizeof(TelemetryPacket));
+        csn_high();
+
+        if (data->header1 != TELEMETRY_HEADER_1 || data->header2 != TELEMETRY_HEADER_2) return false;
+
+        uint8_t calc_cs = 0;
+        uint8_t* ptr = (uint8_t*)data;
+        for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
+
+        return (calc_cs == data->checksum);
     }
 };
+
+#endif // NRF24_TELEMETRY_H
