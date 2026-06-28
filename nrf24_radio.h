@@ -3,6 +3,7 @@
 
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include <cstdint>
 #include <stdio.h>
 
 // --- PACKET HEADERS ---
@@ -58,6 +59,7 @@ private:
     const uint8_t W_REG = 0x20;
     const uint8_t RX_PAYLOAD = 0x61;
     const uint8_t TX_PAYLOAD = 0xA0;
+    const uint8_t TX_PAYLOAD_NOACK = 0xB0;
     const uint8_t FLUSH_TX = 0xE1;
     const uint8_t FLUSH_RX = 0xE2;
 
@@ -71,6 +73,7 @@ private:
     const uint8_t RX_ADDR_P0 = 0x0A;
     const uint8_t TX_ADDR = 0x10;
     const uint8_t RX_PW_P0 = 0x11;
+    const uint8_t FEATURE = 0x1D;
 
     inline void csn_low() { gpio_put(csn_pin, 0); asm volatile("nop \n nop \n nop"); }
     inline void csn_high() { gpio_put(csn_pin, 1); asm volatile("nop \n nop \n nop"); }
@@ -138,26 +141,45 @@ public:
         writeReg(CONFIG, 0x0A);
         sleep_ms(5);
 
-        writeReg(EN_AA, 0x01);
+        // --- CRITICAL TWO-PIPE BI-DIRECTIONAL FIX ---
+        writeReg(EN_AA, 0x03);       // Enable Auto-ACK on Pipe 0 AND Pipe 1
+        writeReg(0x02, 0x03);        // EN_RXADDR: Enable receiving on Pipe 0 AND Pipe 1
+
         writeReg(SETUP_RETR, 0x2F);
         writeReg(RF_CH, 76);
-        writeReg(RF_SETUP, 0x07);
 
-        // Ground Station usually expects Telemetry sizes, Drone expects PID sizes
-        // We set to max 32 to safely cover both
+        // --- RANGE UPGRADE ---
+        // 0x07 = 1 Mbps, Max Power (0dBm)
+        // 0x27 = 250 kbps, Max Power (0dBm) -> Maximum Range!
+        writeReg(RF_SETUP, 0x27);
+
+        // Force 32-Byte payloads on BOTH pipes
         writeReg(RX_PW_P0, 32);
+        writeReg(0x12, 32);          // RX_PW_P1 Register
+
+        // Enable EN_DYN_ACK (Bit 0) to allow NOACK commands for Telemetry
+        writeReg(FEATURE, 0x01);
     }
 
     void setAddresses(const uint8_t* tx_addr, const uint8_t* rx_addr) {
+        // 1. TX_ADDR: Where we are sending data
         csn_low();
         uint8_t cmd_tx = W_REG | TX_ADDR;
         spi_write_blocking(spi, &cmd_tx, 1);
         spi_write_blocking(spi, tx_addr, 5);
         csn_high();
 
+        // 2. RX_ADDR_P0: Must exactly match TX_ADDR to receive Auto-ACKs instantly!
         csn_low();
-        uint8_t cmd_rx = W_REG | RX_ADDR_P0;
-        spi_write_blocking(spi, &cmd_rx, 1);
+        uint8_t cmd_rx0 = W_REG | RX_ADDR_P0;
+        spi_write_blocking(spi, &cmd_rx0, 1);
+        spi_write_blocking(spi, tx_addr, 5);
+        csn_high();
+
+        // 3. RX_ADDR_P1: Where we listen for incoming data
+        csn_low();
+        uint8_t cmd_rx1 = W_REG | 0x0B; // RX_ADDR_P1 Register
+        spi_write_blocking(spi, &cmd_rx1, 1);
         spi_write_blocking(spi, rx_addr, 5);
         csn_high();
     }
@@ -178,11 +200,17 @@ public:
 
     bool dataAvailable() {
         uint8_t status = readReg(STATUS);
+
+        // 0x0E (binary 1110) in bits 1,2,3 means RX FIFO is completely empty.
+        // If it is NOT 0x0E, there is guaranteed data physically waiting in the memory slots!
+        bool has_data = ((status & 0x0E) != 0x0E);
+
+        // Clear the Data Ready interrupt flag if it fired so it's ready for the next batch
         if (status & 0x40) {
             writeReg(STATUS, 0x40);
-            return true;
         }
-        return false;
+
+        return has_data;
     }
 
     // ==========================================================
@@ -199,12 +227,16 @@ public:
         for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
         data->checksum = calc_cs;
 
+        // --- BUG FIX: 32-Byte Padding ---
+        uint8_t buffer[32] = {0};
+        memcpy(buffer, data, sizeof(TelemetryPacket));
+
         stopListening();
 
         csn_low();
-        uint8_t cmd = TX_PAYLOAD;
+        uint8_t cmd = TX_PAYLOAD_NOACK; // Send explicitly asking for NO ACK
         spi_write_blocking(spi, &cmd, 1);
-        spi_write_blocking(spi, (uint8_t*)data, sizeof(TelemetryPacket));
+        spi_write_blocking(spi, buffer, 32); // Send exact 32 bytes
         csn_high();
 
         ce_high();
@@ -233,11 +265,16 @@ public:
 
     // (Drone <- Ground)
     bool readPID(PIDTuningPacket* data) {
+        // --- BUG FIX: 32-Byte Reading ---
+        uint8_t buffer[32] = {0};
+
         csn_low();
         uint8_t cmd = RX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_read_blocking(spi, 0x00, (uint8_t*)data, sizeof(PIDTuningPacket));
+        spi_read_blocking(spi, 0x00, buffer, 32); // Read exact 32 bytes
         csn_high();
+
+        memcpy(data, buffer, sizeof(PIDTuningPacket));
 
         if (data->header1 != PID_HEADER_1 || data->header2 != PID_HEADER_2) return false;
 
@@ -262,12 +299,16 @@ public:
         for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
         data->checksum = calc_cs;
 
+        // --- BUG FIX: 32-Byte Padding ---
+        uint8_t buffer[32] = {0};
+        memcpy(buffer, data, sizeof(PIDTuningPacket));
+
         stopListening();
 
         csn_low();
         uint8_t cmd = TX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_write_blocking(spi, (uint8_t*)data, sizeof(PIDTuningPacket));
+        spi_write_blocking(spi, buffer, 32); // Send exact 32 bytes
         csn_high();
 
         ce_high();
@@ -296,11 +337,16 @@ public:
 
     // (Ground <- Drone)
     bool readTelemetry(TelemetryPacket* data) {
+        // --- BUG FIX: 32-Byte Reading ---
+        uint8_t buffer[32] = {0};
+
         csn_low();
         uint8_t cmd = RX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_read_blocking(spi, 0x00, (uint8_t*)data, sizeof(TelemetryPacket));
+        spi_read_blocking(spi, 0x00, buffer, 32); // Read exact 32 bytes
         csn_high();
+
+        memcpy(data, buffer, sizeof(TelemetryPacket));
 
         if (data->header1 != TELEMETRY_HEADER_1 || data->header2 != TELEMETRY_HEADER_2) return false;
 

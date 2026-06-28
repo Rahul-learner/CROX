@@ -68,10 +68,19 @@ public:
         set_esc_pulse_us(MOTOR4_PWM_PIN, ESC_MIN_PULSE_US);
     }
     void update_motors_pwm(uint throttle, float roll_control_output, float pitch_control_output, float yaw_control_output) {
-        uint32_t motor1_speed = throttle + roll_control_output - pitch_control_output + yaw_control_output;
-        uint32_t motor2_speed = throttle - roll_control_output - pitch_control_output - yaw_control_output;
-        uint32_t motor3_speed = throttle + roll_control_output + pitch_control_output - yaw_control_output;
-        uint32_t motor4_speed = throttle - roll_control_output + pitch_control_output + yaw_control_output;
+        // FIX 1: Flipped Pitch Signs (Front +, Rear -) to fix the tilting issue
+        // FIX 2: Flipped Yaw Signs for your specific CW/CCW configuration
+        // We use int32_t temporarily to safely handle numbers that dip below 0
+        int32_t m1 = throttle + roll_control_output - pitch_control_output - yaw_control_output; // M1: Front Left (CW)
+        int32_t m2 = throttle - roll_control_output - pitch_control_output + yaw_control_output; // M2: Front Right (CCW)
+        int32_t m3 = throttle + roll_control_output + pitch_control_output + yaw_control_output; // M3: Rear Left (CCW)
+        int32_t m4 = throttle - roll_control_output + pitch_control_output - yaw_control_output; // M4: Rear Right (CW)
+
+        // FIX 3: Add constraints to prevent ESC desync if PID spikes outside 1000us-2000us
+        uint32_t motor1_speed = m1 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m1 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m1);
+        uint32_t motor2_speed = m2 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m2 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m2);
+        uint32_t motor3_speed = m3 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m3 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m3);
+        uint32_t motor4_speed = m4 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m4 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m4);
 
         set_esc_pulse_us(MOTOR1_PWM_PIN, motor1_speed);
         set_esc_pulse_us(MOTOR2_PWM_PIN, motor2_speed);

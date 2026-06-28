@@ -24,7 +24,6 @@ struct TelemetryPacket {
     int16_t yaw_pid;
     uint8_t checksum;        // XOR of the payload
 };
-#pragma pack(pop) // Restore default alignment
 
 // __attribute__((packed)) is critical here to prevent memory padding issues
 struct __attribute__((packed)) ConfigPacket {
@@ -37,6 +36,7 @@ struct __attribute__((packed)) ConfigPacket {
     int16_t pitch_bias;
     uint8_t checksum;
 };
+#pragma pack(pop) // Restore default alignment
 
 // Instantiate the packet globally to avoid reallocation
 TelemetryPacket telemetry_data;

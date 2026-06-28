@@ -203,35 +203,50 @@ void core1_entry() {
     PIDTuningPacket new_pids;
 
     while (true) {
-        // UNPACKING PID GAINS (Receiving from Ground)
+
         if (radio.dataAvailable()) {
-            // Only apply the PIDs if the headers and checksum pass!
+            printf("New Data Available!..");
+            // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
-                printf("VALID PIDs Received! Roll P: %.3f\n", (float)new_pids.kp_roll / 1000.0f);
-                // Apply your new PID values...
-            } else {
-                printf("WARNING: Rejected corrupted NRF packet.\n");
+                printf("NEW PID GAINS RECEIVED!\n");
+                float pitch_p = new_pids.kp_pitch / 1000.0f;
+                float pitch_i = new_pids.ki_pitch / 1000.0f;
+                float pitch_d = new_pids.kd_pitch / 1000.0f;
+                pitch_pid.set_pid(pitch_p, pitch_i, pitch_d);
             }
         }
 
-        // Send Telemetry at 20Hz (Every 50ms)
+        // Send Telemetry at 10Hz
         uint32_t current_time = time_us_32();
-        if (current_time - last_telemetry_time > 50000) {
+        if (current_time - last_telemetry_time > 100000) {
             last_telemetry_time = current_time;
 
             // 1. PACKING TELEMETRY (Sending to Ground)
             my_telemetry.roll      = (int16_t)(shared_roll * 100.0f);
             my_telemetry.pitch     = (int16_t)(shared_pitch * 100.0f);
             my_telemetry.yaw       = (int16_t)(shared_yaw * 100.0f);
-            my_telemetry.rc_roll   = (int16_t)shared_rc_roll;
-            my_telemetry.rc_pitch  = (int16_t)shared_rc_pitch;
-            my_telemetry.rc_yaw    = (int16_t)shared_rc_yaw;
-            my_telemetry.pid_roll  = (int16_t)shared_pid_roll;
-            my_telemetry.pid_pitch = (int16_t)shared_pid_pitch;
-            my_telemetry.pid_yaw   = (int16_t)shared_pid_yaw;
-            my_telemetry.dt_us     = (uint16_t)(shared_dt_us * 1000000.0f); // Convert seconds to microseconds
+            my_telemetry.rc_roll   = (int16_t)(shared_rc_roll * 100.0f);
+            my_telemetry.rc_pitch  = (int16_t)(shared_rc_pitch * 100.0f);
+            my_telemetry.rc_yaw    = (int16_t)(shared_rc_yaw * 100.0f);
+            my_telemetry.pid_roll  = (int16_t)(shared_pid_roll * 100.0f);
+            my_telemetry.pid_pitch = (int16_t)(shared_pid_pitch * 100.0f);
+            my_telemetry.pid_yaw   = (int16_t)(shared_pid_yaw * 100.0f);
+            my_telemetry.dt_us     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
 
-            // radio.sendTelemetry(&my_telemetry);
+            radio.sendTelemetry(&my_telemetry);
+            printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt: %f\n",
+                   my_telemetry.roll / 100.0f,
+                   my_telemetry.pitch / 100.0f,
+                   my_telemetry.yaw / 100.0f,
+                   my_telemetry.rc_roll / 100.0f,
+                   my_telemetry.rc_pitch / 100.0f,
+                   my_telemetry.rc_yaw / 100.0f,
+                   my_telemetry.pid_roll / 100.0f,
+                   my_telemetry.pid_pitch / 100.0f,
+                   my_telemetry.pid_yaw / 100.0f,
+                   my_telemetry.dt_us / 100.0f);
+
+
         }
 
         // Tiny sleep to prevent Core 1 from aggressively locking the system bus
@@ -448,14 +463,12 @@ int main() {
                 run_accel_update = !run_accel_update;
 
 
-                if (loop_counter % 64 == 0) {
-                    uint64_t current_time_pid_us = time_us_64();
+                uint64_t current_time_pid_us = time_us_64();
+                if ((current_time_pid_us - last_update_pid_us) >= 2040) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
                     filter.getEulerAngles(roll, pitch, yaw);
                     filter.get_clean_rates(gz, yaw_rate);
-                    gx = gx * 180.0f / 3.14159265358979323846f;
-                    gy = gy * 180.0f / 3.14159265358979323846f;
                     gz = gz * 180.0f / 3.14159265358979323846f;
 
                     // get the setpoint
@@ -482,7 +495,7 @@ int main() {
                     shared_pid_pitch = pitch_control_output;
                     shared_pid_yaw = yaw_control_output;
                     shared_dt_us = dt_ekf;
-                    printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid_output: %f, rc_pitch: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us);
+                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid_output: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n", roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
                     // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
                     // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
                     // printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
