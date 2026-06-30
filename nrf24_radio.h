@@ -59,7 +59,6 @@ private:
     const uint8_t W_REG = 0x20;
     const uint8_t RX_PAYLOAD = 0x61;
     const uint8_t TX_PAYLOAD = 0xA0;
-    const uint8_t TX_PAYLOAD_NOACK = 0xB0;
     const uint8_t FLUSH_TX = 0xE1;
     const uint8_t FLUSH_RX = 0xE2;
 
@@ -73,7 +72,6 @@ private:
     const uint8_t RX_ADDR_P0 = 0x0A;
     const uint8_t TX_ADDR = 0x10;
     const uint8_t RX_PW_P0 = 0x11;
-    const uint8_t FEATURE = 0x1D;
 
     inline void csn_low() { gpio_put(csn_pin, 0); asm volatile("nop \n nop \n nop"); }
     inline void csn_high() { gpio_put(csn_pin, 1); asm volatile("nop \n nop \n nop"); }
@@ -130,7 +128,12 @@ public:
         sleep_ms(2);
         uint8_t response = readReg(RF_CH);
 
-        return (response == test_channel);
+        if (response == test_channel) {
+            return true;
+        } else {
+            printf("[NRF24 ERROR] SPI Verification Failed! Expected: %d, Got: %d\n", test_channel, response);
+            return false;
+        }
     }
 
     void init() {
@@ -141,42 +144,30 @@ public:
         writeReg(CONFIG, 0x0A);
         sleep_ms(5);
 
-        // --- CRITICAL TWO-PIPE BI-DIRECTIONAL FIX ---
         writeReg(EN_AA, 0x03);       // Enable Auto-ACK on Pipe 0 AND Pipe 1
         writeReg(0x02, 0x03);        // EN_RXADDR: Enable receiving on Pipe 0 AND Pipe 1
-
         writeReg(SETUP_RETR, 0x2F);
         writeReg(RF_CH, 76);
+        writeReg(RF_SETUP, 0x27);    // 250 kbps, Max Power (0dBm)
 
-        // --- RANGE UPGRADE ---
-        // 0x07 = 1 Mbps, Max Power (0dBm)
-        // 0x27 = 250 kbps, Max Power (0dBm) -> Maximum Range!
-        writeReg(RF_SETUP, 0x27);
-
-        // Force 32-Byte payloads on BOTH pipes
         writeReg(RX_PW_P0, 32);
         writeReg(0x12, 32);          // RX_PW_P1 Register
-
-        // Enable EN_DYN_ACK (Bit 0) to allow NOACK commands for Telemetry
-        writeReg(FEATURE, 0x01);
+        // FEATURE register removed entirely to prevent clone chip lockups
     }
 
     void setAddresses(const uint8_t* tx_addr, const uint8_t* rx_addr) {
-        // 1. TX_ADDR: Where we are sending data
         csn_low();
         uint8_t cmd_tx = W_REG | TX_ADDR;
         spi_write_blocking(spi, &cmd_tx, 1);
         spi_write_blocking(spi, tx_addr, 5);
         csn_high();
 
-        // 2. RX_ADDR_P0: Must exactly match TX_ADDR to receive Auto-ACKs instantly!
         csn_low();
         uint8_t cmd_rx0 = W_REG | RX_ADDR_P0;
         spi_write_blocking(spi, &cmd_rx0, 1);
         spi_write_blocking(spi, tx_addr, 5);
         csn_high();
 
-        // 3. RX_ADDR_P1: Where we listen for incoming data
         csn_low();
         uint8_t cmd_rx1 = W_REG | 0x0B; // RX_ADDR_P1 Register
         spi_write_blocking(spi, &cmd_rx1, 1);
@@ -200,16 +191,10 @@ public:
 
     bool dataAvailable() {
         uint8_t status = readReg(STATUS);
-
-        // 0x0E (binary 1110) in bits 1,2,3 means RX FIFO is completely empty.
-        // If it is NOT 0x0E, there is guaranteed data physically waiting in the memory slots!
         bool has_data = ((status & 0x0E) != 0x0E);
-
-        // Clear the Data Ready interrupt flag if it fired so it's ready for the next batch
         if (status & 0x40) {
             writeReg(STATUS, 0x40);
         }
-
         return has_data;
     }
 
@@ -227,16 +212,19 @@ public:
         for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
         data->checksum = calc_cs;
 
-        // --- BUG FIX: 32-Byte Padding ---
         uint8_t buffer[32] = {0};
         memcpy(buffer, data, sizeof(TelemetryPacket));
 
         stopListening();
 
+        // --- CLONE BUG FIX: Disable Auto-ACK dynamically via Register ---
+        uint8_t en_aa_bak = readReg(EN_AA);
+        writeReg(EN_AA, en_aa_bak & ~0x01); // Temporarily turn off ACK for Pipe 0
+
         csn_low();
-        uint8_t cmd = TX_PAYLOAD_NOACK; // Send explicitly asking for NO ACK
+        uint8_t cmd = TX_PAYLOAD; // Reverted back to standard Command
         spi_write_blocking(spi, &cmd, 1);
-        spi_write_blocking(spi, buffer, 32); // Send exact 32 bytes
+        spi_write_blocking(spi, buffer, 32);
         csn_high();
 
         ce_high();
@@ -248,16 +236,20 @@ public:
         while (true) {
             status = readReg(STATUS);
             if (status & 0x20 || status & 0x10) break;
-            if (time_us_32() - start_time > 10000) break;
+            if (time_us_32() - start_time > 10000) {
+                printf("[NRF24 ERROR] Telemetry TX Hardware Timeout! Status: 0x%02X\n", status);
+                break;
+            }
         }
 
-        writeReg(STATUS, 0x30); // Clear interrupts
+        writeReg(STATUS, 0x30);
 
-        // --- BUG FIX: Clear stuck packets if MAX_RT triggered! ---
         if (status & 0x10) {
+            printf("[NRF24 ERROR] Telemetry TX MAX_RT hit! Buffer flushed.\n");
             writeCmd(FLUSH_TX);
         }
 
+        writeReg(EN_AA, en_aa_bak); // Restore Auto-ACK state before listening
         startListening();
 
         return (status & 0x20);
@@ -265,24 +257,31 @@ public:
 
     // (Drone <- Ground)
     bool readPID(PIDTuningPacket* data) {
-        // --- BUG FIX: 32-Byte Reading ---
         uint8_t buffer[32] = {0};
 
         csn_low();
         uint8_t cmd = RX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_read_blocking(spi, 0x00, buffer, 32); // Read exact 32 bytes
+        spi_read_blocking(spi, 0x00, buffer, 32);
         csn_high();
 
         memcpy(data, buffer, sizeof(PIDTuningPacket));
 
-        if (data->header1 != PID_HEADER_1 || data->header2 != PID_HEADER_2) return false;
+        if (data->header1 != PID_HEADER_1 || data->header2 != PID_HEADER_2) {
+            printf("[NRF24 ERROR] Invalid PID Header! Got: 0x%02X 0x%02X\n", data->header1, data->header2);
+            return false;
+        }
 
         uint8_t calc_cs = 0;
         uint8_t* ptr = (uint8_t*)data;
         for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
 
-        return (calc_cs == data->checksum);
+        if (calc_cs != data->checksum) {
+            printf("[NRF24 ERROR] PID Checksum Mismatch! Calc: 0x%02X, Got: 0x%02X\n", calc_cs, data->checksum);
+            return false;
+        }
+
+        return true;
     }
 
     // ==========================================================
@@ -299,7 +298,6 @@ public:
         for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
         data->checksum = calc_cs;
 
-        // --- BUG FIX: 32-Byte Padding ---
         uint8_t buffer[32] = {0};
         memcpy(buffer, data, sizeof(PIDTuningPacket));
 
@@ -308,7 +306,7 @@ public:
         csn_low();
         uint8_t cmd = TX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_write_blocking(spi, buffer, 32); // Send exact 32 bytes
+        spi_write_blocking(spi, buffer, 32);
         csn_high();
 
         ce_high();
@@ -320,13 +318,16 @@ public:
         while (true) {
             status = readReg(STATUS);
             if (status & 0x20 || status & 0x10) break;
-            if (time_us_32() - start_time > 10000) break;
+            if (time_us_32() - start_time > 10000) {
+                printf("[NRF24 ERROR] PID TX Hardware Timeout! Status: 0x%02X\n", status);
+                break;
+            }
         }
 
-        writeReg(STATUS, 0x30); // Clear interrupts
+        writeReg(STATUS, 0x30);
 
-        // --- BUG FIX: Clear stuck packets if MAX_RT triggered! ---
         if (status & 0x10) {
+            printf("[NRF24 ERROR] PID TX MAX_RT (Max Retries) hit! Drone offline or out of range.\n");
             writeCmd(FLUSH_TX);
         }
 
@@ -337,24 +338,31 @@ public:
 
     // (Ground <- Drone)
     bool readTelemetry(TelemetryPacket* data) {
-        // --- BUG FIX: 32-Byte Reading ---
         uint8_t buffer[32] = {0};
 
         csn_low();
         uint8_t cmd = RX_PAYLOAD;
         spi_write_blocking(spi, &cmd, 1);
-        spi_read_blocking(spi, 0x00, buffer, 32); // Read exact 32 bytes
+        spi_read_blocking(spi, 0x00, buffer, 32);
         csn_high();
 
         memcpy(data, buffer, sizeof(TelemetryPacket));
 
-        if (data->header1 != TELEMETRY_HEADER_1 || data->header2 != TELEMETRY_HEADER_2) return false;
+        if (data->header1 != TELEMETRY_HEADER_1 || data->header2 != TELEMETRY_HEADER_2) {
+            printf("[NRF24 ERROR] Invalid Telemetry Header! Got: 0x%02X 0x%02X\n", data->header1, data->header2);
+            return false;
+        }
 
         uint8_t calc_cs = 0;
         uint8_t* ptr = (uint8_t*)data;
         for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
 
-        return (calc_cs == data->checksum);
+        if (calc_cs != data->checksum) {
+            printf("[NRF24 ERROR] Telemetry Checksum Mismatch! Calc: 0x%02X, Got: 0x%02X\n", calc_cs, data->checksum);
+            return false;
+        }
+
+        return true;
     }
 };
 
