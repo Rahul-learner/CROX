@@ -24,6 +24,10 @@
 #define PICO_DEFAULT_LED_PIN 25
 #endif
 
+float bias_roll = 0.0f;
+float bias_pitch = 0.0f;
+float bias_yaw = 0.0f;
+
 float q_gyro = 0.001f;
 float q_bias = 0.00001f;
 float r_accel = 1.5f;
@@ -175,6 +179,11 @@ void process_command(char* buffer) {
         printf("ACK PID: %f, %f, %f\n", pid_p, pid_i, pid_d);
         pitch_pid.set_pid(pid_p, pid_i, pid_d);
     }
+    else if (strncmp(buffer, "BIAS,", 5) == 0) {
+        // Parse the Roll, Pitch, and Yaw bias offsets
+        sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
+        printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
+    }
 }
 
 // Non-blocking serial listener
@@ -204,7 +213,7 @@ void core1_entry() {
 
     while (true) {
 
-        if (radio.dataAvailable()) {
+        while (radio.dataAvailable()) {
             printf("New Data Available!..");
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
@@ -234,17 +243,17 @@ void core1_entry() {
             my_telemetry.dt_us     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
 
             radio.sendTelemetry(&my_telemetry);
-            printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt: %f\n",
-                   my_telemetry.roll / 100.0f,
-                   my_telemetry.pitch / 100.0f,
-                   my_telemetry.yaw / 100.0f,
-                   my_telemetry.rc_roll / 100.0f,
-                   my_telemetry.rc_pitch / 100.0f,
-                   my_telemetry.rc_yaw / 100.0f,
-                   my_telemetry.pid_roll / 100.0f,
-                   my_telemetry.pid_pitch / 100.0f,
-                   my_telemetry.pid_yaw / 100.0f,
-                   my_telemetry.dt_us / 100.0f);
+            // printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt: %f\n",
+            //        my_telemetry.roll / 100.0f,
+            //        my_telemetry.pitch / 100.0f,
+            //        my_telemetry.yaw / 100.0f,
+            //        my_telemetry.rc_roll / 100.0f,
+            //        my_telemetry.rc_pitch / 100.0f,
+            //        my_telemetry.rc_yaw / 100.0f,
+            //        my_telemetry.pid_roll / 100.0f,
+            //        my_telemetry.pid_pitch / 100.0f,
+            //        my_telemetry.pid_yaw / 100.0f,
+            //        my_telemetry.dt_us / 100.0f);
 
 
         }
@@ -388,7 +397,6 @@ int main() {
     bool run_accel_update = true;
 
     float yaw_rate, dt_ekf, dt_pid;
-    float roll_bias = 0.0f, pitch_bias = 0.0f;
     uint32_t loop_counter = 0;
 
 
@@ -468,6 +476,10 @@ int main() {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
                     filter.getEulerAngles(roll, pitch, yaw);
+                    // apply bias
+                    roll -= bias_roll;
+                    pitch -= bias_pitch;
+                    yaw -= bias_yaw;
                     filter.get_clean_rates(gz, yaw_rate);
                     gz = gz * 180.0f / 3.14159265358979323846f;
 
@@ -495,7 +507,8 @@ int main() {
                     shared_pid_pitch = pitch_control_output;
                     shared_pid_yaw = yaw_control_output;
                     shared_dt_us = dt_ekf;
-                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid_output: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n", roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
+                    printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n",
+                           roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
                     // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
                     // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
                     // printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
