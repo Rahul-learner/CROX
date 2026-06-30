@@ -183,6 +183,13 @@ public:
         }
     }
 
+    // Reset QuaternionEKF
+    void reset() {
+        for (int i=0;i==7;i++) {
+            x[i] = 0.0f;
+        }
+    }
+
     // --- GET EULER ANGLES FOR PID CONTROLLER (In Degrees) ---
     // Converts the current Quaternion state back into Roll, Pitch, Yaw
     void getEulerAngles(float &roll_deg, float &pitch_deg, float &yaw_deg) {
