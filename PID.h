@@ -17,8 +17,7 @@ private:
     float d_cutoff_hz;                 // PT1 Filter cutoff frequency
 
 public:
-    // Added a default cutoff of 80Hz (Standard for 5-inch quads)
-    PIDController(float p, float i, float d, float cutoff_hz = 80.0f)
+    PIDController(float p, float i, float d, float cutoff_hz = 25.0f)
     : kp(p), ki(i), kd(d), d_cutoff_hz(cutoff_hz) {}
 
     float compute(float setpoint, float measured_value, float dt) {
