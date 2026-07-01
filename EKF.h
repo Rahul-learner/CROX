@@ -11,14 +11,23 @@ public:
     // --- COVARIANCE MATRIX (7x7) ---
     float P[7][7];
 
-    // Fast Inverse Square Root (Crucial for 8kHz loops!)
-    inline float invSqrt(float number) {
-        float half = 0.5f * number;
-        int32_t i = *(int32_t*)&number;
+    // Fast inverse square-root
+    // See: http://en.wikipedia.org/wiki/Fast_inverse_square_root
+    inline float invSqrt(float x)
+    {
+        // return 1.f / sqrt(x);
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wstrict-aliasing"
+        #pragma GCC diagnostic ignored "-Wuninitialized"
+        float halfx = 0.5f * x;
+        float y = x;
+        long i = *(long*)&y;
         i = 0x5f3759df - (i >> 1);
-        number = *(float*)&i;
-        number = number * (1.5f - (half * number * number));
-        return number;
+        y = *(float*)&i;
+        y = y * (1.5f - (halfx * y * y));
+        y = y * (1.5f - (halfx * y * y));
+        #pragma GCC diagnostic pop
+        return y;
     }
 
     QuaternionEKF() {
