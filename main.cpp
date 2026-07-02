@@ -18,6 +18,14 @@
 #include "nrf24_radio.h"
 // #include "calibration.h"
 
+// #define DEBUG_MODE
+
+// Create a custom print macro
+#ifdef DEBUG_MODE
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...) // Does absolutely nothing when flying
+#endif
 
 // --- Define the GPIO pin for the onboard LED ---
 #ifndef PICO_DEFAULT_LED_PIN
@@ -456,7 +464,7 @@ int main() {
                 while (receiver_pwm[2] > 1051.0f) {
                     motor.reset();
                     fc_buzzer.play_tone(1);
-                    printf("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
+                    DEBUG_PRINT("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
                     gpio_put(PICO_DEFAULT_LED_PIN, 1);
                     sleep_ms(200);
                     receiver.read_throttle(receiver_pwm[2]);
@@ -470,14 +478,7 @@ int main() {
             } else {
                 gpio_put(PICO_DEFAULT_LED_PIN, 1);
             }
-            // ESC Calibration
-            if (esc_calibration) {
-                motor.update_motors_pwm(2000.0f, 0.0f, 0.0f, 0.0f);
-                printf("ESC Calibration. THROTTLE IS MAX!\n");
-                sleep_ms(200);
-                continue;
-            }
-            // Only process data if the MPU6050 interrupt indicates new data is ready
+            // Only process data if the IMU interrupt indicates new data is ready
             if (imu_data_ready) {
                 // Reset the flag immediately to avoid missing subsequent interrupts
                 imu_data_ready = false;
@@ -541,9 +542,10 @@ int main() {
                     shared_pid_yaw = yaw_control_output;
                     shared_dt_us = dt_ekf;
                     send_telemetry = true;
-                    printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
-                           roll, pitch, yaw_rate, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
-                           dt_pid, dt_ekf);
+                    DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
+                            roll, pitch, yaw_rate, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
+                            dt_pid, dt_ekf);
+
                     // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n",
                     //        roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
                     // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
@@ -563,7 +565,7 @@ int main() {
             pitch_pid.reset();
             yaw_pid.reset();
             first_throttle_on = true;
-            printf("Not Armed. Throttle: %f\n", receiver_pwm[2]);
+            DEBUG_PRINT("Not Armed. Throttle: %f\n", receiver_pwm[2]);
             gpio_put(PICO_DEFAULT_LED_PIN, 0);
             sleep_ms(200);
         }
