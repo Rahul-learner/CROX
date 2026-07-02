@@ -520,7 +520,7 @@ int main() {
                     yaw_control_output = yaw_pid.compute(receiver_pwm[3], gz, dt_pid);
 
                     // Motor PWM output
-                    // motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
+                    motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
 
                 }
 
