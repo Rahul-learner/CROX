@@ -32,11 +32,20 @@ float q_gyro = 0.001f;
 float q_bias = 0.00001f;
 float r_accel = 1.5f;
 
-float pid_p = 0.0f;
-float pid_i = 0.0f;
-float pid_d = 0.0f;
+// pid values
+// p = 1.75
+// i = 0.04
+// d = 0.47
+float pid_p_roll_pitch = 1.75f;
+float pid_i_roll_pitch = 0.04f;
+float pid_d_roll_pitch = 0.47f;
+// yaw pid values
+float pid_p_yaw = 1.0f;
+float pid_i_yaw = 0.0f;
+float pid_d_yaw = 0.05f;
 
 // --- Shared Variables for Dual-Core Communication ---
+volatile bool send_telemetry = false;
 volatile float shared_roll = 0.0f;
 volatile float shared_pitch = 0.0f;
 volatile float shared_yaw = 0.0f;
@@ -94,9 +103,9 @@ NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MI
 Buzzer fc_buzzer(15);
 
 // --- Initializing PID ---
-PIDController roll_pid(0.0f, 0.0f, 0.0f);
-PIDController pitch_pid(0.0f, 0.0f, 0.0f);
-PIDController yaw_pid(0.0f, 0.0f, 0.0f);
+PIDController roll_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+PIDController pitch_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+PIDController yaw_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
 
 void record_readings_for_SITL(BMI160& imu) {
   #pragma pack(push, 1)
@@ -171,16 +180,22 @@ void record_readings_for_SITL(BMI160& imu) {
 void process_command(char* buffer) {
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
-        // Optional: Send confirmation back to Rust
         printf("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
     }
-    else if (strncmp(buffer, "PID,", 4) == 0) {
-        sscanf(buffer, "PID,%f,%f,%f", &pid_p, &pid_i, &pid_d);
-        printf("ACK PID: %f, %f, %f\n", pid_p, pid_i, pid_d);
-        pitch_pid.set_pid(pid_p, pid_i, pid_d);
+    // NEW: Roll & Pitch PID
+    else if (strncmp(buffer, "PID_RP,", 7) == 0) {
+        sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
+        printf("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        // roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+    }
+    // NEW: Yaw PID
+    else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
+        sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
+        printf("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
+        yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
-        // Parse the Roll, Pitch, and Yaw bias offsets
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
         printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
     }
@@ -210,24 +225,42 @@ void core1_entry() {
     uint32_t last_telemetry_time = time_us_32();
     TelemetryPacket my_telemetry;
     PIDTuningPacket new_pids;
+    bool radio_restarted = false;
 
     while (true) {
 
+        if (!send_telemetry && !radio_restarted) {
+            radio.restart();
+            radio_restarted = true;
+        }
+
         while (radio.dataAvailable()) {
+            radio_restarted = false;
             printf("New Data Available!..");
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
-                printf("NEW PID GAINS RECEIVED!\n");
-                float pitch_p = new_pids.kp_pitch / 1000.0f;
-                float pitch_i = new_pids.ki_pitch / 1000.0f;
-                float pitch_d = new_pids.kd_pitch / 1000.0f;
-                pitch_pid.set_pid(pitch_p, pitch_i, pitch_d);
+                printf("NEW PID GAINS and BIAS ANGLES RECEIVED!\n");
+                float kp_roll_pitch = new_pids.kp_roll_pitch / 1000.0f;
+                float ki_roll_pitch = new_pids.ki_roll_pitch / 1000.0f;
+                float kd_roll_pitch = new_pids.kd_roll_pitch / 1000.0f;
+                float kp_yaw = new_pids.kp_yaw / 1000.0f;
+                float ki_yaw = new_pids.ki_yaw / 1000.0f;
+                float kd_yaw = new_pids.kd_yaw / 1000.0f;
+                bias_roll = new_pids.bias_roll / 1000.0f;
+                bias_pitch = new_pids.bias_pitch / 1000.0f;
+                bias_yaw = new_pids.bias_yaw / 1000.0f;
+                printf("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
+                roll_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
+                pitch_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
+                yaw_pid.set_pid(kp_yaw, ki_yaw, kd_yaw);
+                fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
             }
         }
 
         // Send Telemetry at 10Hz
         uint32_t current_time = time_us_32();
-        if (current_time - last_telemetry_time > 100000) {
+        if (send_telemetry && (current_time - last_telemetry_time > 20000)) {
+            radio_restarted = false;
             last_telemetry_time = current_time;
 
             // 1. PACKING TELEMETRY (Sending to Ground)
@@ -507,8 +540,12 @@ int main() {
                     shared_pid_pitch = pitch_control_output;
                     shared_pid_yaw = yaw_control_output;
                     shared_dt_us = dt_ekf;
-                    printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n",
-                           roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
+                    send_telemetry = true;
+                    printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
+                           roll, pitch, yaw_rate, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
+                           dt_pid, dt_ekf);
+                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n",
+                    //        roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
                     // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
                     // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
                     // printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
@@ -520,6 +557,8 @@ int main() {
         } else {
             motor.reset();
             check_serial_commands();
+            send_telemetry = false;
+            filter.reset();
             roll_pid.reset();
             pitch_pid.reset();
             yaw_pid.reset();
