@@ -437,7 +437,7 @@ int main() {
     bool first_throttle_on = true;
     bool run_accel_update = true;
 
-    float yaw_rate, dt_ekf, dt_pid;
+    float dt_ekf, dt_pid;
     uint32_t loop_counter = 0;
 
 
@@ -452,8 +452,6 @@ int main() {
             receiver_pwm[0] *= -1;
             receiver_pwm[1] -= rc_pitch_bias;
             receiver_pwm[3] -= rc_yaw_bias;
-            // Send Telemetry
-            //telemetry.send_telemetry(roll, pitch, yaw_rate, dt, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], 0.0f, 0.0f, 0.0f);
             last_update_rc_us = current_pwm_update;
         }
         // receiver_pwm[2] = 1006.0f;
@@ -514,13 +512,12 @@ int main() {
                     roll -= bias_roll;
                     pitch -= bias_pitch;
                     yaw -= bias_yaw;
-                    filter.get_clean_rates(gz, yaw_rate);
                     gz = gz * 180.0f / 3.14159265358979323846f;
 
                     // get the setpoint
                     roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt_pid);
                     pitch_control_output = pitch_pid.compute(receiver_pwm[1], pitch, dt_pid);
-                    yaw_control_output = yaw_pid.compute(receiver_pwm[3], yaw_rate, dt_pid);
+                    yaw_control_output = yaw_pid.compute(receiver_pwm[3], gz, dt_pid);
 
                     // Motor PWM output
                     motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
@@ -533,7 +530,7 @@ int main() {
                 if ((end - last_update_print_us) > 1000000/60) {
                     shared_roll = roll;
                     shared_pitch = pitch;
-                    shared_yaw = yaw_rate;
+                    shared_yaw = gz;
                     shared_rc_roll = receiver_pwm[0];
                     shared_rc_pitch = receiver_pwm[1];
                     shared_rc_yaw = receiver_pwm[3];
@@ -543,14 +540,8 @@ int main() {
                     shared_dt_us = dt_ekf;
                     send_telemetry = true;
                     DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
-                            roll, pitch, yaw_rate, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
+                            roll, pitch, gz, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
                             dt_pid, dt_ekf);
-
-                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, pitch_pid: %f, rc_pitch: %f, dt_ekf: %f, dt_us: %f, dt_pid: %f\n",
-                    //        roll, pitch, yaw_rate, gz, pitch_control_output, receiver_pwm[1], dt_ekf, dt_us, dt_pid);
-                    // printf("Roll: %f, Pitch: %f, Yaw_Rate: %f, raw_yaw_rate: %f, dt: %f, dt_s: %f\n", roll, pitch, yaw_rate, gz, dt, dt_s);
-                    // printf("AX: %f, AY: %f, AZ: %f, GX: %f, GY: %f, GZ: %f, dt: %f\n", ax, ay, az, gx, gy, gz, dt);
-                    // printf("D-Roll: %f, D-Pitch: %f, Y-Pitch: %f\n", receiver_pwm[0], receiver_pwm[1], receiver_pwm[3]);
                     last_update_print_us = end;
                 }
 
