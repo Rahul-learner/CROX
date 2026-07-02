@@ -501,13 +501,13 @@ int main() {
                     filter.update(ax, ay, az, r_accel);
                 }
                 run_accel_update = !run_accel_update;
+                filter.getEulerAngles(roll, pitch, yaw);
 
 
                 uint64_t current_time_pid_us = time_us_64();
                 if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
-                    filter.getEulerAngles(roll, pitch, yaw);
                     // apply bias
                     roll -= bias_roll;
                     pitch -= bias_pitch;
@@ -520,7 +520,7 @@ int main() {
                     yaw_control_output = yaw_pid.compute(receiver_pwm[3], gz, dt_pid);
 
                     // Motor PWM output
-                    motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
+                    // motor.update_motors_pwm(receiver_pwm[2], roll_control_output, pitch_control_output, yaw_control_output);
 
                 }
 
