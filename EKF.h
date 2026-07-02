@@ -48,7 +48,8 @@ public:
         // Remove tracked bias from raw gyro (must be in Rad/s)
         float wx = gx - x[4];
         float wy = gy - x[5];
-        float wz = gz - x[6];
+        // float wz = gz - x[6]; // Z-axis is unobservable without a magnetometer
+        float wz = gz;
 
         float q0 = x[0], q1 = x[1], q2 = x[2], q3 = x[3];
 
@@ -84,7 +85,9 @@ public:
             }
         }
 
-        float Q[7] = {q_quat, q_quat, q_quat, q_quat, q_bias, q_bias, q_bias};
+        // Q Matrix: Set z-bias noise to 0.0 so the EKF stops trying to track it
+        // float Q[7] = {q_quat, q_quat, q_quat, q_quat, q_bias, q_bias, q_bias};
+        float Q[7] = {q_quat, q_quat, q_quat, q_quat, q_bias, q_bias, 0.0f};
 
         for (int i = 0; i < 7; i++) {
             for (int j = 0; j < 7; j++) {
@@ -194,9 +197,10 @@ public:
 
     // Reset QuaternionEKF
     void reset() {
-        for (int i=0;i==7;i++) {
+        for (int i=0; i<7; i++) {
             x[i] = 0.0f;
         }
+        x[0] = 1.0f;
     }
 
     // --- GET EULER ANGLES FOR PID CONTROLLER (In Degrees) ---
@@ -211,12 +215,6 @@ public:
         else
             pitch_deg = asinf(sinp) * (180.0f / M_PI);
         yaw_deg   = std::atan2(2.0f * (q0*q3 + q1*q2), 1.0f - 2.0f * (q2*q2 + q3*q3)) / DEG_TO_RAD;
-    }
-
-    // --- GET CLEAN GYRO RATES FOR PID D-TERM (In Degrees/s) ---
-    void get_clean_rates(float raw_gz, float &yaw_rate) {
-        const float RAD_TO_DEG = 180.0f / 3.14159265358979323846f;
-        yaw_rate = (raw_gz - x[6]) * RAD_TO_DEG;
     }
 };
 
