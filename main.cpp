@@ -504,7 +504,7 @@ int main() {
 
 
                 uint64_t current_time_pid_us = time_us_64();
-                if ((current_time_pid_us - last_update_pid_us) >= 2040) {
+                if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
                     filter.getEulerAngles(roll, pitch, yaw);
