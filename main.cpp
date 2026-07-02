@@ -273,7 +273,7 @@ void core1_entry() {
             my_telemetry.pid_roll  = (int16_t)(shared_pid_roll * 100.0f);
             my_telemetry.pid_pitch = (int16_t)(shared_pid_pitch * 100.0f);
             my_telemetry.pid_yaw   = (int16_t)(shared_pid_yaw * 100.0f);
-            my_telemetry.dt_us     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
+            my_telemetry.dt_s     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
 
             radio.sendTelemetry(&my_telemetry);
             // printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt: %f\n",

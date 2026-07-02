@@ -27,7 +27,7 @@ struct TelemetryPacket {
     int16_t pid_roll;
     int16_t pid_pitch;
     int16_t pid_yaw;
-    uint16_t dt_us;
+    uint16_t dt_s;
     uint8_t checksum;
 };
 
