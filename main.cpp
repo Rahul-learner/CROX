@@ -50,7 +50,7 @@ float pid_d_roll_pitch = 0.47f;
 // yaw pid values
 float pid_p_yaw = 1.0f;
 float pid_i_yaw = 0.0f;
-float pid_d_yaw = 0.05f;
+float pid_d_yaw = 0.0f; // No d gain for yaw
 
 // --- Shared Variables for Dual-Core Communication ---
 volatile bool send_telemetry = false;
