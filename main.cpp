@@ -32,8 +32,8 @@
 #define PICO_DEFAULT_LED_PIN 25
 #endif
 
-float bias_roll = 0.0f;
-float bias_pitch = 0.0f;
+float bias_roll = 3.95f;
+float bias_pitch = 1.87f;
 float bias_yaw = 0.0f;
 
 float q_gyro = 0.001f;
@@ -261,7 +261,8 @@ void core1_entry() {
                 roll_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
                 pitch_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
                 yaw_pid.set_pid(kp_yaw, ki_yaw, kd_yaw);
-                fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
+                fc_buzzer.play_tone(1);
+                sleep_ms(500);
             }
         }
 
