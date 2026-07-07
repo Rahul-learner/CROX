@@ -30,3 +30,4 @@ jobs:
               with:
                   name: workspace_artifacts
                   path: ${{steps.build.outputs.output_dir}}/CROX.uf2
+                  archive: false
