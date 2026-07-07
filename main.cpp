@@ -16,7 +16,7 @@
 #include "PID.h"
 #include "buzzer.h"
 #include "nrf24_radio.h"
-// #include "calibration.h"
+#include "msp_protocol.h"
 
 // #define DEBUG_MODE
 
@@ -27,12 +27,14 @@
 #define DEBUG_PRINT(...) // Does absolutely nothing when flying
 #endif
 
+bool pids_updated_via_msp = false;
+
 // --- Define the GPIO pin for the onboard LED ---
 #ifndef PICO_DEFAULT_LED_PIN
 #define PICO_DEFAULT_LED_PIN 25
 #endif
 
-float bias_roll = 3.95f;
+float bias_roll = -3.95f;
 float bias_pitch = 1.87f;
 float bias_yaw = 0.0f;
 
@@ -65,7 +67,7 @@ volatile float shared_pid_pitch = 0.0f;
 volatile float shared_pid_yaw = 0.0f;
 volatile float shared_dt_us = 0.0f;
 
-#define SPI_PORT spi0 
+#define SPI_PORT spi0
 #define PIN_MISO 16
 #define PIN_CS 17
 #define PIN_SCK 18
@@ -74,11 +76,12 @@ volatile float shared_dt_us = 0.0f;
 
 // receiver data
 float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-float rc_roll_bias = -0.357097f, rc_pitch_bias = 0.553079f, rc_yaw_bias = -0.632232f;
+
 
 // Global variables for filtered data
 float roll = 0.0f, pitch = 0.0f, yaw = 0.0f; // Added yaw
 volatile bool imu_data_ready = false; // Flag set by interrupt handler
+bool was_armed = false;
 
 // Global variable for tracking time
 static uint64_t last_update_ekf_us = 0;
@@ -106,6 +109,7 @@ const uint8_t drone_tx_addr[5] = {'G', 'R', 'N', 'D', '1'}; // Sending to Ground
 const uint8_t drone_rx_addr[5] = {'D', 'R', 'O', 'N', '1'}; // Receiving from Ground
 
 // --- Initialize Class ---
+MSP_Protocol msp_bridge;
 BMI160 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
 NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
 Buzzer fc_buzzer(15);
@@ -116,73 +120,74 @@ PIDController pitch_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
 PIDController yaw_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
 
 void record_readings_for_SITL(BMI160& imu) {
-  #pragma pack(push, 1)
-  struct Readings {
-    uint8_t header1;
-    uint8_t header2;
-    float ax;
-    float ay;
-    float az;
-    float gx;
-    float gy;
-    float gz;
-    uint64_t timestamp;
-    uint8_t checksum;
-  };
-  #pragma pack(pop)
-  Readings readings;
-  readings.header1 = 0xAA;
-  readings.header2 = 0xBB;
-  size_t data_size = sizeof(readings);
-  uint64_t sec_of_reading = 1000000ULL * 50ULL;
-  
-  uint64_t start = time_us_64();
-  uint64_t end = time_us_64();
-  while ((end - start) < sec_of_reading) {
-    if (imu_data_ready) {
-      imu_data_ready = false;
-      imu.readData(&readings.ax, &readings.ay, &readings.az, &readings.gx, &readings.gy, &readings.gz);
-      readings.timestamp = time_us_64();
-      // Compute simple XOR Checksum across the entire data struct (excluding headers and checksum byte itself)
-      uint8_t* byte_ptr = (uint8_t*)&readings;
-      uint8_t calc_checksum = 0;
-      // Offset by 2 bytes to skip 0xAA and 0xBB. Stop before the final checksum byte.
-      for (size_t i = 2; i < data_size - 1; i++) {
-          calc_checksum ^= byte_ptr[i];
-      }
-      readings.checksum = calc_checksum;
-      fwrite(&readings, data_size, 1, stdout);
-      fflush(stdout);
+    #pragma pack(push, 1)
+    struct Readings {
+        uint8_t header1;
+        uint8_t header2;
+        float ax;
+        float ay;
+        float az;
+        float gx;
+        float gy;
+        float gz;
+        uint64_t timestamp;
+        uint8_t checksum;
+    };
+    #pragma pack(pop)
+    Readings readings;
+    readings.header1 = 0xAA;
+    readings.header2 = 0xBB;
+    size_t data_size = sizeof(readings);
+    uint64_t sec_of_reading = 1000000ULL * 50ULL;
+
+    uint64_t start = time_us_64();
+    uint64_t end = time_us_64();
+    while ((end - start) < sec_of_reading) {
+        if (imu_data_ready) {
+            imu_data_ready = false;
+            imu.readData(&readings.ax, &readings.ay, &readings.az, &readings.gx, &readings.gy, &readings.gz);
+            readings.timestamp = time_us_64();
+            // Compute simple XOR Checksum across the entire data struct (excluding headers and checksum byte itself)
+            uint8_t* byte_ptr = (uint8_t*)&readings;
+            uint8_t calc_checksum = 0;
+            // Offset by 2 bytes to skip 0xAA and 0xBB. Stop before the final checksum byte.
+            for (size_t i = 2; i < data_size - 1; i++) {
+                calc_checksum ^= byte_ptr[i];
+            }
+            readings.checksum = calc_checksum;
+            fwrite(&readings, data_size, 1, stdout);
+            fflush(stdout);
+        }
+        end = time_us_64();
     }
-    end = time_us_64();
-  }
-  Readings stop_packet;
-  stop_packet.header1 = 0xAA;
-  stop_packet.header2 = 0xBB;
-  
-  // Zero out sensor values
-  stop_packet.ax = 0.0f; stop_packet.ay = 0.0f; stop_packet.az = 0.0f;
-  stop_packet.gx = 0.0f; stop_packet.gy = 0.0f; stop_packet.gz = 0.0f;
-  
-  // Set timestamp to MAX value as a stop indicator flag
-  stop_packet.timestamp = 0xFFFFFFFFFFFFFFFFULL; 
+    Readings stop_packet;
+    stop_packet.header1 = 0xAA;
+    stop_packet.header2 = 0xBB;
 
-  // Compute checksum for the stop packet so it passes validation on the PC
-  uint8_t* byte_ptr = (uint8_t*)&stop_packet;
-  uint8_t calc_checksum = 0;
-  for (size_t i = 2; i < data_size - 1; i++) {
-      calc_checksum ^= byte_ptr[i];
-  }
-  stop_packet.checksum = calc_checksum;
+    // Zero out sensor values
+    stop_packet.ax = 0.0f; stop_packet.ay = 0.0f; stop_packet.az = 0.0f;
+    stop_packet.gx = 0.0f; stop_packet.gy = 0.0f; stop_packet.gz = 0.0f;
 
-  // Send the stop signal multiple times (e.g., 5 times) to guarantee delivery 
-  // in case of transmission noise
-  for (int i = 0; i < 5; i++) {
-      fwrite(&stop_packet, data_size, 1, stdout);
-      fflush(stdout);
-      sleep_ms(2);
-  }
+    // Set timestamp to MAX value as a stop indicator flag
+    stop_packet.timestamp = 0xFFFFFFFFFFFFFFFFULL;
+
+    // Compute checksum for the stop packet so it passes validation on the PC
+    uint8_t* byte_ptr = (uint8_t*)&stop_packet;
+    uint8_t calc_checksum = 0;
+    for (size_t i = 2; i < data_size - 1; i++) {
+        calc_checksum ^= byte_ptr[i];
+    }
+    stop_packet.checksum = calc_checksum;
+
+    // Send the stop signal multiple times (e.g., 5 times) to guarantee delivery
+    // in case of transmission noise
+    for (int i = 0; i < 5; i++) {
+        fwrite(&stop_packet, data_size, 1, stdout);
+        fflush(stdout);
+        sleep_ms(2);
+    }
 }
+
 
 // Parse the received usb string
 void process_command(char* buffer) {
@@ -244,10 +249,10 @@ void core1_entry() {
 
         while (radio.dataAvailable()) {
             radio_restarted = false;
-            printf("New Data Available!..");
+            DEBUG_PRINT("New Data Available!..");
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
-                printf("NEW PID GAINS and BIAS ANGLES RECEIVED!\n");
+                DEBUG_PRINT("NEW PID GAINS and BIAS ANGLES RECEIVED!\n");
                 float kp_roll_pitch = new_pids.kp_roll_pitch / 1000.0f;
                 float ki_roll_pitch = new_pids.ki_roll_pitch / 1000.0f;
                 float kd_roll_pitch = new_pids.kd_roll_pitch / 1000.0f;
@@ -257,12 +262,13 @@ void core1_entry() {
                 bias_roll = new_pids.bias_roll / 1000.0f;
                 bias_pitch = new_pids.bias_pitch / 1000.0f;
                 bias_yaw = new_pids.bias_yaw / 1000.0f;
-                printf("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
+                DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
                 roll_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
                 pitch_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
                 yaw_pid.set_pid(kp_yaw, ki_yaw, kd_yaw);
                 fc_buzzer.play_tone(1);
-                sleep_ms(500);
+                sleep_ms(200);
+                fc_buzzer.stop();
             }
         }
 
@@ -315,9 +321,9 @@ int main() {
     // Initialize standard I/O for USB serial
     stdio_init_all();
     sleep_ms(3000);
-    printf("Started...\n");
-    printf("Pico started!\n");
-    printf("CPU Frequency: %i kHz\n", clock_get_hz(clk_sys) / 1000);
+    DEBUG_PRINT("Started...\n");
+    DEBUG_PRINT("Pico started!\n");
+    DEBUG_PRINT("CPU Frequency: %i kHz\n", clock_get_hz(clk_sys) / 1000);
 
     // --- Initialize onboard LED ---
     gpio_init(PICO_DEFAULT_LED_PIN);
@@ -333,12 +339,12 @@ int main() {
     bool hardware_ok = true;
 
     if (!imu.checkConnection()) {
-        printf("CRITICAL ERROR: BMI160 not found!\n");
+        DEBUG_PRINT("CRITICAL ERROR: BMI160 not found!\n");
         hardware_ok = false;
     }
 
     if (!radio.checkConnection()) {
-        printf("CRITICAL ERROR: NRF24 not found!\n");
+        DEBUG_PRINT("CRITICAL ERROR: NRF24 not found!\n");
         hardware_ok = false;
     }
 
@@ -350,13 +356,13 @@ int main() {
         }
     }
 
-    printf("All hardware detected! Initializing...\n");
+    DEBUG_PRINT("All hardware detected! Initializing...\n");
     imu.init();
     radio.init();
     radio.setAddresses(drone_tx_addr, drone_rx_addr);
     radio.startListening();
 
-    printf("Launching Core 1 for Telemetry...\n");
+    DEBUG_PRINT("Launching Core 1 for Telemetry...\n");
     multicore_launch_core1(core1_entry);
 
     // --- Configure MPU6000 Interrupt Pin ---
@@ -364,12 +370,12 @@ int main() {
     gpio_set_dir(MPU_INT_PIN, GPIO_IN);
     gpio_pull_up(MPU_INT_PIN); // BMI160 INT pin is active low, so pull-up is needed
     gpio_set_irq_enabled_with_callback(MPU_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &mpu_isr);
-    printf("BMI160 Interrupt configured on GP%d.\n", MPU_INT_PIN);
+    DEBUG_PRINT("BMI160 Interrupt configured on GP%d.\n", MPU_INT_PIN);
 
     // ====================================================================
     // GYROSCOPE CALIBRATION
     // ====================================================================
-    printf("Calibrating Gyroscope... DO NOT MOVE THE DRONE!\n");
+    DEBUG_PRINT("Calibrating Gyroscope... DO NOT MOVE THE DRONE!\n");
     fc_buzzer.play_tone(NOTE_C5);
     sleep_ms(100);
     fc_buzzer.stop();
@@ -402,7 +408,7 @@ int main() {
     gyro_bias_y /= CALIBRATION_SAMPLES;
     gyro_bias_z /= CALIBRATION_SAMPLES;
 
-    printf("Calibration Complete! Biases: X:%.4f Y:%.4f Z:%.4f\n", gyro_bias_x, gyro_bias_y, gyro_bias_z);
+    DEBUG_PRINT("Calibration Complete! Biases: X:%.4f Y:%.4f Z:%.4f\n", gyro_bias_x, gyro_bias_y, gyro_bias_z);
 
     // Play the success startup tune!
     fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
@@ -411,22 +417,17 @@ int main() {
     // Initialize the Filter
     QuaternionEKF filter;
 
-    // Calibration
-    //calibrate_receiver(receiver, rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
-    printf("Receiver Calibrated: roll_bias: %f, pitch_bias: %f, yaw_bias: %f\n", rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
-    bool esc_calibration = false;
-
     bool tune_EKF = false;
     if (tune_EKF) {
-      while (!stdio_usb_connected()) {
-        sleep_ms(100);
-      }
-      stdio_set_translate_crlf(&stdio_usb, false);
-      sleep_ms(1000);
-      gpio_put(PICO_DEFAULT_LED_PIN, 1);
-      record_readings_for_SITL(imu);
-      gpio_put(PICO_DEFAULT_LED_PIN, 0);
-      stdio_set_translate_crlf(&stdio_usb, true);
+        while (!stdio_usb_connected()) {
+            sleep_ms(100);
+        }
+        stdio_set_translate_crlf(&stdio_usb, false);
+        sleep_ms(1000);
+        gpio_put(PICO_DEFAULT_LED_PIN, 1);
+        record_readings_for_SITL(imu);
+        gpio_put(PICO_DEFAULT_LED_PIN, 0);
+        stdio_set_translate_crlf(&stdio_usb, true);
     }
 
     // Re-initialize last_update_us after settling
@@ -448,15 +449,16 @@ int main() {
         uint64_t current_pwm_update = time_us_64();
         if ((current_pwm_update - last_update_rc_us) > 1000000/50) {
             receiver.read_pwm(receiver_pwm);
-            receiver_pwm[0] -= rc_roll_bias;
+
             // reverse the roll
             receiver_pwm[0] *= -1;
-            receiver_pwm[1] -= rc_pitch_bias;
-            receiver_pwm[3] -= rc_yaw_bias;
+
+
             last_update_rc_us = current_pwm_update;
         }
         // receiver_pwm[2] = 1006.0f;
         if (receiver_pwm[2] > 1005.0f) {
+            was_armed = true;
             if (first_throttle_on) {
                 fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
 
@@ -503,17 +505,29 @@ int main() {
                 }
                 run_accel_update = !run_accel_update;
                 filter.getEulerAngles(roll, pitch, yaw);
+                // apply bias
+                roll -= bias_roll;
+                pitch -= bias_pitch;
+                yaw -= bias_yaw;
+                gz = gz * 180.0f / 3.14159265358979323846f;
 
+                msp_bridge.update(roll, pitch, yaw, ax, ay, az, gx, gy, gz);
+                if (pids_updated_via_msp) {
+                    roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                    pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                    yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
+
+                    fc_buzzer.play_tone(NOTE_A5);
+                    sleep_ms(100);
+                    fc_buzzer.stop();
+
+                    pids_updated_via_msp = false;
+                }
 
                 uint64_t current_time_pid_us = time_us_64();
                 if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
-                    // apply bias
-                    roll -= bias_roll;
-                    pitch -= bias_pitch;
-                    yaw -= bias_yaw;
-                    gz = gz * 180.0f / 3.14159265358979323846f;
 
                     // get the setpoint
                     roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt_pid);
@@ -541,8 +555,8 @@ int main() {
                     shared_dt_us = dt_ekf;
                     send_telemetry = true;
                     DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
-                            roll, pitch, gz, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
-                            dt_pid, dt_ekf);
+                                roll, pitch, gz, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
+                                dt_pid, dt_ekf);
                     last_update_print_us = end;
                 }
 
@@ -550,7 +564,7 @@ int main() {
 
         } else {
             motor.reset();
-            check_serial_commands();
+
             send_telemetry = false;
             filter.reset();
             roll_pid.reset();
@@ -565,5 +579,4 @@ int main() {
 
     return 0;
 }
-
 
