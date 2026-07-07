@@ -7,6 +7,7 @@
 #define UART_RX_PIN 17
 #define BAUD_RATE 38400
 
+
 // 1. Define the Binary Packet Structure
 #pragma pack(push, 1) // Force 1-byte alignment
 struct TelemetryPacket {

@@ -23,9 +23,9 @@ add_executable(CROX
     writePWM.h
     PID.h
     PwmIn.pio
-    calibration.h
     buzzer.h
     nrf24_radio.h
+    msp_protocol.h
 )
 
 pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
