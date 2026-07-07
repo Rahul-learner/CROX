@@ -26,8 +26,7 @@ jobs:
                   cmake_args: "-DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350"
 
             - name: Upload Build Artifacts
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7.0.1
               with:
                   name: workspace_artifacts
-                  path: ${{steps.build.outputs.output_dir}}/CROX.uf2
-                  archive: false
+                  path: ${{steps.build.outputs.output_dir}}
