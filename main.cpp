@@ -1,7 +1,6 @@
 #include <hardware/timer.h>
 #include <stdio.h>        // For standard input/output functions like printf
 #include "pico/stdio_usb.h"
-#include <math.h>         // For mathematical functions like atan2, asin, sqrt
 #include <string.h>       // For memset
 #include "pico/stdlib.h"  // For general Pico standard library functions (gpio_init, sleep_ms, etc.)
 #include "hardware/gpio.h" // For GPIO (General Purpose Input/Output) functions and interrupts
