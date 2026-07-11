@@ -26,6 +26,8 @@ add_executable(CROX
     buzzer.h
     nrf24_radio.h
     msp_protocol.h
+    blackbox.h
+    blackbox.cpp
 )
 
 pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
@@ -47,6 +49,8 @@ target_link_libraries(CROX
         hardware_uart
         pico_multicore
         hardware_spi
+        hardware_flash
+        hardware_sync
         m)
 
 # Add the standard include files to the build
