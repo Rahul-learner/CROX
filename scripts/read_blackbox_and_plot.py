@@ -273,6 +273,7 @@ class BlackboxViewer(QMainWindow):
         self.axis_line_x, = self.ax_3d.plot([], [], [], color='red', linewidth=3)
         self.axis_line_y, = self.ax_3d.plot([], [], [], color='green', linewidth=3)
         self.axis_line_z, = self.ax_3d.plot([], [], [], color='blue', linewidth=3)
+        self.thrust_line, = self.ax_3d.plot([], [], [], color='yellow', linewidth=5, zorder=5)
 
         self.update_3d_drone(0.0, 0.0, 0.0, 1000, 1000, 1000, 1000)
         
@@ -488,6 +489,22 @@ class BlackboxViewer(QMainWindow):
         z_axis = R @ np.array([0, 0, 2.0])
         self.axis_line_z.set_data([0, z_axis[0]], [0, z_axis[1]])
         self.axis_line_z.set_3d_properties([0, z_axis[2]])
+
+        # Net Force Vector Visualization (Thrust + Gravity)
+        # Assume 1500 average PWM per motor perfectly hovers (T=1.0 cancels G=1.0)
+        thrust_mag = max(((m1 + m2 + m3 + m4) - 4000) / 2000.0, 0.0)
+        
+        # Calculate local thrust vector, rotate to global, and add global gravity vector
+        thrust_vector_global = R @ np.array([0, 0, thrust_mag])
+        gravity_vector_global = np.array([0, 0, -1.0])
+        
+        net_vector = thrust_vector_global + gravity_vector_global
+        
+        # Scale by 2.0 for better visibility in the 3D plot
+        net_vector *= 2.0
+        
+        self.thrust_line.set_data([0, net_vector[0]], [0, net_vector[1]])
+        self.thrust_line.set_3d_properties([0, net_vector[2]])
 
         # Update rotor colors based on RPM (1000 - 2000)
         # 6 faces per rotor
