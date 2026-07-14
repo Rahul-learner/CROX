@@ -16,33 +16,33 @@ project(CROX C CXX ASM)
 pico_sdk_init()
 
 add_executable(CROX
-    main.cpp
-    EKF.cpp
-    EKF.h
-    readIMU.cpp
-    readIMU.h
-    readPWM.cpp
-    readPWM.h
-    writePWM.cpp
-    writePWM.h
-    PID.cpp
-    PID.h
-    PwmIn.pio
-    buzzer.cpp
-    buzzer.h
-    nrf24_radio.cpp
-    nrf24_radio.h
-    msp_protocol.cpp
-    msp_protocol.h
-    telemetry.cpp
-    telemetry.h
-    calibration.cpp
-    calibration.h
-    blackbox.cpp
-    blackbox.h
+    src/main.cpp
+    src/EKF.cpp
+    include/EKF.h
+    src/readIMU.cpp
+    include/readIMU.h
+    src/readPWM.cpp
+    include/readPWM.h
+    src/writePWM.cpp
+    include/writePWM.h
+    src/PID.cpp
+    include/PID.h
+    src/PwmIn.pio
+    src/buzzer.cpp
+    include/buzzer.h
+    src/nrf24_radio.cpp
+    include/nrf24_radio.h
+    src/msp_protocol.cpp
+    include/msp_protocol.h
+    src/telemetry.cpp
+    include/telemetry.h
+    src/calibration.cpp
+    include/calibration.h
+    src/blackbox.cpp
+    include/blackbox.h
 )
 
-pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
+pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/src/PwmIn.pio)
 
 pico_set_program_name(CROX "CROX")
 pico_set_program_version(CROX "0.1")
@@ -68,6 +68,7 @@ target_link_libraries(CROX
 # Add the standard include files to the build
 target_include_directories(CROX PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/include
         )
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(CROX)
