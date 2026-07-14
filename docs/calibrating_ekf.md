@@ -1,68 +1,83 @@
-First, congratulations. Building a 9-DoF Extended Kalman Filter from scratch on a microcontroller, handling the hardware interrupts, and writing a binary telemetry link is a massive engineering achievement. You now have a professional-grade flight controller core.
+# EKF Calibration Guide
 
-The final step—calibrating the EKF—is famously referred to in the aerospace industry as a "dark art."
+This document explains how to calibrate and tune the **Extended Kalman Filter (EKF)** on the CROX flight controller. The EKF fuses the BMI160 gyroscope and accelerometer data into a stable, drift‑free 3D orientation (roll, pitch, yaw).
 
-To get your drone locked in, you must realize that "calibrating an EKF" actually requires two completely different processes:
-
-1. **Sensor Calibration (Physics):** Removing the physical hardware errors from the raw chips.
-2. **Covariance Tuning (Mathematics):** Adjusting the $Q$ and $R$ matrices to change how the EKF "trusts" the sensors.
-
-Here is your master guide to completing both.
+> **Note:** EKF tuning is distinct from PID tuning. The EKF determines *where the drone is pointing*. The PID determines *how to move the motors* to achieve the desired orientation. Always ensure the EKF is perfectly tuned and outputs clean angles before attempting to tune the PIDs.
 
 ---
 
-### Phase 1: Sensor Calibration (Hardware)
+## 1. Hardware Calibration (Gyro Bias)
 
-The EKF assumes the data you feed it is physically accurate. If your accelerometer thinks $0^\circ$ is actually $3^\circ$ because the chip was soldered slightly crooked, the EKF will mathematically lock the drone at a $3^\circ$ tilt.
+The gyroscope is highly susceptible to temperature changes and minor physical offsets, causing it to "drift" over time.
 
-**1. Gyroscope Calibration (Do this on EVERY boot)**
+### Startup Calibration
+To fix this, the flight controller automatically calibrates the gyro on **every boot**.
 
-* **The Issue:** Gyros drift due to temperature.
-* **The Fix:** Every time you power on the Pico, keep the drone perfectly still. Take 1,000 readings of `gx, gy, gz`. Calculate the average for each axis. Subtract this exact average from every future gyro reading before feeding it to `predict()`.
-
-**2. Accelerometer Calibration (Do this ONCE)**
-
-* **The Issue:** The accelerometer zero-point isn't perfect, and its sensitivity isn't exactly $1G$.
-* **The Fix (6-Point Tumble):** Place your drone perfectly flat on a table. Record the Z-axis (it should be exactly $1G$). Flip it upside down (should be $-1G$). Point the nose straight down (X should be $1G$), nose straight up, left side down, right side down.
-* Find the min and max values for X, Y, and Z. Calculate the offset `(max + min) / 2` and subtract it. Calculate the scale factor to ensure gravity always perfectly normalizes to `1.0`.
-
-**3. Magnetometer Calibration (Do this ONCE per build)**
-
-* **The Issue:** Hard and soft iron interference from your motors and wires.
-* **The Fix:** Use the 3D figure-8 bounding box method we wrote earlier to find the `mag_offset` and `mag_scale`.
+1. Place the drone on a perfectly still, level surface.
+2. Plug in the battery / USB power.
+3. The firmware will sample the gyro `CALIBRATION_SAMPLES` times (default `1000`, defined in `config/config.h`).
+4. It calculates the average drift on the X, Y, and Z axes and subtracts this bias from all future readings.
+5. **CRITICAL:** Do not move the drone until the startup buzzer melody finishes playing. If you bump the drone during boot, the EKF will drift constantly in flight.
 
 ---
 
-### Phase 2: Covariance Tuning (Mathematics)
+## 2. Covariance Tuning (Q and R Matrices)
 
-Once the physical data is clean, you must tune the EKF's "brain." This is done by adjusting the $R$ (Measurement Noise) and $Q$ (Process Noise) matrices in your C++ constructor.
+The EKF uses covariance matrices to determine how much it "trusts" the physics model (Gyro) versus the absolute measurements (Accelerometer).
 
-To understand exactly what changing these numbers does to your drone, try tuning this live 1D simulation.
+These defaults are set in `config/config.h`:
 
-#### Tuning the $R$ Matrix (How much do you trust the Accel/Mag?)
+```c
+// =============================================================================
+// EKF DEFAULTS
+// =============================================================================
+#define DEFAULT_Q_GYRO   0.001f
+#define DEFAULT_Q_BIAS   0.00001f
+#define DEFAULT_R_ACCEL  1.5f
+```
 
-The $R$ matrix defines how noisy your absolute sensors are.
+### Tuning the Measurement Noise ($R$ Matrix)
+**`DEFAULT_R_ACCEL`** determines how noisy the accelerometer is.
+- **Lower $R$**: The EKF trusts the accelerometer *more*. The 3D model will snap quickly to the true horizon, but it may twitch violently in response to motor vibrations.
+- **Higher $R$**: The EKF trusts the accelerometer *less*. It will heavily smooth out motor vibrations, but if the gyro drifts, it will take longer to correct itself back to the true horizon.
+- **How to tune**: For a high‑vibration drone frame, increase this value (e.g., `2.0f`). For a very smooth frame with soft‑mounted flight controllers, you can decrease it (e.g., `1.0f`).
 
-* `R[i][i] = 0.1f` (Accelerometer)
-* `R_mag = 0.5f` (Magnetometer)
-* **How to tune it:** You don't have to guess these numbers! Leave the drone sitting on your desk with the motors running (without propellers!). Record 1,000 raw accelerometer and magnetometer readings. Calculate the **Variance** (standard deviation squared) of those readings. Plug those exact variances directly into your $R$ matrices. High vibration frames need a larger $R$.
+### Tuning the Process Noise ($Q$ Matrix)
+**`DEFAULT_Q_GYRO`** and **`DEFAULT_Q_BIAS`** determine how much confidence the EKF has in the gyroscope integration math.
+- **`Q_GYRO`**: State noise. If you increase this, you are telling the EKF "my gyro integration is probably drifting, please look at the accelerometer more often to fix it."
+- **`Q_BIAS`**: Gyro drift rate. Very small number. Represents how fast the gyro bias changes over time due to temperature.
 
-#### Tuning the $Q$ Matrix (How much do you trust your Gyro kinematics?)
+### Tuning Methodology
+1. If the drone orientation looks **"twitchy"** or shakes when motors spin up: The filter is trusting the noisy accelerometer too much. **Increase $R$** (`DEFAULT_R_ACCEL`).
+2. If the drone orientation looks **"smooth" but slowly floats/drifts** past the actual angle before settling: The filter is ignoring the accelerometer and trusting the gyro too much. **Increase $Q$** (`DEFAULT_Q_GYRO`) or **decrease $R$**.
 
-The $Q$ matrix defines how much confidence you have in your physics prediction (the Gyroscope integration).
+---
 
-* `Q[0 to 3] = 0.001f` (Quaternion state noise)
-* `Q[4 to 6] = 0.003f` (Gyro bias drift noise)
-* **How to tune it:** This is the subjective part.
-* **If the 3D model in your web dashboard looks "twitchy" or shakes:** Your filter is trusting the noisy accelerometer too much. You need to **increase $R$** or **decrease $Q$**.
-* **If the 3D model looks "smooth" but lags behind your physical hand movements:** The filter is ignoring the accelerometer and trusting the gyro too much. It takes too long to correct drift. You need to **increase $Q$** or **decrease $R$**.
+## 3. Using UART Telemetry for EKF Testing
 
+When tuning the EKF, you need to visualize the 3D orientation (roll/pitch/yaw) in real‑time on a ground station or 3D dashboard.
 
+Because you are usually testing this on the bench (often without the NRF24 radio connected or needed), the flight controller supports a dedicated **UART Telemetry Link**.
 
-### The Ultimate Tuning Methodology
+### UART Configuration
 
-If you want to perfectly dial in the filter without going crazy, follow this exact sequence:
+Defined in `config/config.h`:
+```c
+#define TELEM_UART_ID       uart0
+#define TELEM_UART_TX_PIN   12 // Shared with RADIO_MISO
+#define TELEM_UART_RX_PIN   13 // Shared with RADIO_CSN
+#define TELEM_BAUD_RATE     38400
+```
 
-1. **Isolate the Gyro:** Set $R$ to a massive number (e.g., `1000.0f`). This effectively turns off the accelerometer and magnetometer. Move the drone around. It should move smoothly but will eventually drift away from level. This confirms your `predict()` math is perfect.
-2. **Dial in the Accel:** Bring the accelerometer $R$ down to `0.1f`. Hold the drone at a $45^\circ$ angle. It should quickly snap to $45^\circ$ on your screen. If it vibrates, raise $R$. If it slowly floats to $45^\circ$ over two seconds, lower $R$ (or raise $Q$).
-3. **Dial in the Mag:** Finally, set `R_mag` to `0.5f`. Point the drone North. Rotate it $90^\circ$ East. If the yaw overshoots East and slowly crawls back, your $Q$ yaw bias is too low. If it twitches constantly, raise `R_mag`.
+### Important Pin Conflicts
+To ensure the BMI160 IMU is always available for the EKF, the UART telemetry pins (`12`, `13`) share GPIO lines with the **NRF24 Radio**.
+> ⚠️ **You cannot use UART telemetry and the NRF24 radio at the same time.** The UART telemetry is strictly intended for bench‑testing the EKF filter while the drone is disarmed and plugged into a serial adapter. When you are ready to fly and tune PIDs, rely on the NRF24 radio link instead.
+
+### Testing Steps
+1. Connect a USB‑to‑Serial (FTDI) adapter to `GPIO 12 (TX)` and `GPIO 13 (RX)`.
+2. Open your ground station dashboard at `38400` baud.
+3. The drone will stream binary `TelemetryPacket`s containing the EKF `roll`, `pitch`, and `yaw` at 10 Hz (as long as `send_telemetry` is triggered in the main loop).
+4. Move the drone by hand and watch the 3D model. Adjust $Q$ and $R$ in `config.h`, recompile, and flash until the 3D representation perfectly matches your physical hand movements.
+
+---
+*Last updated: 2026‑07‑14*
