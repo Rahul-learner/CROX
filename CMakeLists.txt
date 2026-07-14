@@ -17,16 +17,29 @@ pico_sdk_init()
 
 add_executable(CROX
     main.cpp
+    EKF.cpp
     EKF.h
+    readIMU.cpp
     readIMU.h
+    readPWM.cpp
     readPWM.h
+    writePWM.cpp
     writePWM.h
+    PID.cpp
     PID.h
     PwmIn.pio
+    buzzer.cpp
     buzzer.h
+    nrf24_radio.cpp
     nrf24_radio.h
-    blackbox.h
+    msp_protocol.cpp
+    msp_protocol.h
+    telemetry.cpp
+    telemetry.h
+    calibration.cpp
+    calibration.h
     blackbox.cpp
+    blackbox.h
 )
 
 pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
