@@ -1,15 +1,13 @@
 #ifndef BLACKBOX_H
 #define BLACKBOX_H
 
+#include "config.h"
 #include <stdint.h>
 #include <stddef.h>
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include <stdio.h>
 
-// 256KB of RAM dedicated to Blackbox
-#define BLACKBOX_RAM_BYTES (256 * 1024) 
-#define FLASH_TARGET_OFFSET (2048 * 1024) // Save at the 2MB mark in Flash
 
 #pragma pack(push, 1) // Prevent memory padding
 struct BlackboxPacket {

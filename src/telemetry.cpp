@@ -11,22 +11,22 @@ int packet_index = 0;
 
 void Telemetry::setup_telemetry_uart() {
     // 1. Initialize the UART hardware block at the target baud rate
-    uart_init(UART_ID, BAUD_RATE);
+    uart_init(TELEM_UART_ID, TELEM_BAUD_RATE);
 
     // 2. Tell the GPIO pins to switch from standard I/O mode into UART mode
-    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
-    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(TELEM_UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(TELEM_UART_RX_PIN, GPIO_FUNC_UART);
 
     // 3. Configure the UART format (8 data bits, 1 stop bit, no parity)
-    uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
+    uart_set_format(TELEM_UART_ID, 8, 1, UART_PARITY_NONE);
 
     // 4. Disable hardware flow control (we only have TX and RX wires, no RTS/CTS)
-    uart_set_hw_flow(UART_ID, false, false);
+    uart_set_hw_flow(TELEM_UART_ID, false, false);
 
     // 5. Enable the internal FIFO buffer
     // This allows you to dump your 9-byte struct into the hardware instantly
     // without blocking your flight controller's math loop.
-    uart_set_fifo_enabled(UART_ID, true);
+    uart_set_fifo_enabled(TELEM_UART_ID, true);
 }
 
 Telemetry::Telemetry() {
@@ -39,13 +39,14 @@ void Telemetry::send_telemetry(float roll, float pitch, float yaw, float dt, flo
     telemetry_data.roll = (int16_t)(roll * 100.0f);
     telemetry_data.pitch = (int16_t)(pitch * 100.0f);
     telemetry_data.yaw = (int16_t)(yaw * 100.0f);
-    telemetry_data.dt = (int16_t)(dt * 1000000.0f);
-    telemetry_data.desired_roll = (int16_t)(desired_roll * 100.0f);
-    telemetry_data.desired_pitch = (int16_t)(desired_pitch * 100.0f);
-    telemetry_data.desired_yaw = (int16_t)(desired_yaw * 100.0f);
-    telemetry_data.roll_pid = (int16_t)(roll_pid * 100.0f);
-    telemetry_data.pitch_pid = (int16_t)(pitch_pid * 100.0f);
-    telemetry_data.yaw_pid = (int16_t)(yaw_pid * 100.0f);
+    telemetry_data.dt_s = (uint16_t)(dt * 1000000.0f);
+    telemetry_data.rc_roll = (int16_t)(desired_roll * 100.0f);
+    telemetry_data.rc_pitch = (int16_t)(desired_pitch * 100.0f);
+    telemetry_data.rc_yaw = (int16_t)(desired_yaw * 100.0f);
+    telemetry_data.pid_roll = (int16_t)(roll_pid * 100.0f);
+    telemetry_data.pid_pitch = (int16_t)(pitch_pid * 100.0f);
+    telemetry_data.pid_yaw = (int16_t)(yaw_pid * 100.0f);
+
 
     // Calculate Checksum (XOR all payload bytes together)
     // We cast the payload to an array of bytes to iterate over them
@@ -60,15 +61,15 @@ void Telemetry::send_telemetry(float roll, float pitch, float yaw, float dt, flo
 
     // 3. Blast it over UART
     // Send the memory block directly to the hardware
-    uart_write_blocking(UART_ID, (uint8_t*)&telemetry_data, sizeof(TelemetryPacket));
+    uart_write_blocking(TELEM_UART_ID, (uint8_t*)&telemetry_data, sizeof(TelemetryPacket));
 }
 
 // --- Non-Blocking Read Function ---
 void Telemetry::process_incoming_config(PIDController& roll_pid, PIDController& pitch_pid, PIDController& yaw_pid, float& roll_bias, float& pitch_bias) {
     // uart_is_readable() instantly returns true or false.
     // It will NEVER pause your flight controller loop waiting for data.
-    while (uart_is_readable(UART_ID)) {
-        uint8_t c = uart_getc(UART_ID);
+    while (uart_is_readable(TELEM_UART_ID)) {
+        uint8_t c = uart_getc(TELEM_UART_ID);
 
         // 1. Wait for Header 1 (0xCC)
         if (packet_index == 0 && c != 0xCC) continue;

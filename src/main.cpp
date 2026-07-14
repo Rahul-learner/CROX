@@ -9,6 +9,7 @@
 #include "stdint.h"
 #include "pico/multicore.h"
 #include "EKF.h"
+#include "config.h"
 #include "readIMU.h"
 #include "readPWM.h"
 #include "writePWM.h"
@@ -16,8 +17,6 @@
 #include "buzzer.h"
 #include "nrf24_radio.h"
 #include "blackbox.h"
-
-// #define DEBUG_MODE
 
 // Create a custom print macro
 #ifdef DEBUG_MODE
@@ -31,25 +30,21 @@
 #define PICO_DEFAULT_LED_PIN 25
 #endif
 
-float bias_roll = -3.95f;
-float bias_pitch = 1.87f;
-float bias_yaw = 0.0f;
+float bias_roll = DEFAULT_BIAS_ROLL;
+float bias_pitch = DEFAULT_BIAS_PITCH;
+float bias_yaw = DEFAULT_BIAS_YAW;
 
-float q_gyro = 0.001f;
-float q_bias = 0.00001f;
-float r_accel = 1.5f;
+float q_gyro = DEFAULT_Q_GYRO;
+float q_bias = DEFAULT_Q_BIAS;
+float r_accel = DEFAULT_R_ACCEL;
 
-// pid values
-// p = 1.75
-// i = 0.04
-// d = 0.47
-float pid_p_roll_pitch = 1.75f;
-float pid_i_roll_pitch = 0.04f;
-float pid_d_roll_pitch = 0.47f;
-// yaw pid values
-float pid_p_yaw = 1.0f;
-float pid_i_yaw = 0.0f;
-float pid_d_yaw = 0.0f; // No d gain for yaw
+// PID values (initialised from config defaults, tuneable at runtime)
+float pid_p_roll_pitch = DEFAULT_PID_P_ROLL_PITCH;
+float pid_i_roll_pitch = DEFAULT_PID_I_ROLL_PITCH;
+float pid_d_roll_pitch = DEFAULT_PID_D_ROLL_PITCH;
+float pid_p_yaw = DEFAULT_PID_P_YAW;
+float pid_i_yaw = DEFAULT_PID_I_YAW;
+float pid_d_yaw = DEFAULT_PID_D_YAW;
 
 BlackboxPacket bb_packet;
 
@@ -66,12 +61,7 @@ volatile float shared_pid_pitch = 0.0f;
 volatile float shared_pid_yaw = 0.0f;
 volatile float shared_dt_us = 0.0f;
 
-#define SPI_PORT spi0
-#define PIN_MISO 16
-#define PIN_CS 17
-#define PIN_SCK 18
-#define PIN_MOSI 19
-#define MPU_INT_PIN 20
+
 
 // receiver data
 float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -90,28 +80,20 @@ static uint32_t last_update_telemetry_us = 0;
 
 // --- BMI160 Interrupt handler ---
 void mpu_isr(uint gpio, uint32_t events) {
-    if (gpio == MPU_INT_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
+    if (gpio == IMU_INT_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
         imu_data_ready = true; // Set flag to process data in main loop
     }
 }
 
-// SPI communication for nRF24 Transceiver
-#define RADIO_SPI_PORT spi1
-#define RADIO_CE 14
-#define RADIO_CSN 13
-#define RADIO_SCK 10
-#define RADIO_MOSI 11
-#define RADIO_MISO 12
-
-// 5 byte address (Drone and Ground Station Must be Flipped)
-const uint8_t drone_tx_addr[5] = {'G', 'R', 'N', 'D', '1'}; // Sending to Ground
-const uint8_t drone_rx_addr[5] = {'D', 'R', 'O', 'N', '1'}; // Receiving from Ground
+// Radio addresses (from config)
+const uint8_t drone_tx_addr[5] = DRONE_TX_ADDR;
+const uint8_t drone_rx_addr[5] = DRONE_RX_ADDR;
 
 // --- Initialize Class ---
 Blackbox blackbox;
-BMI160 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
+BMI160 imu(IMU_SPI_PORT, IMU_PIN_CS, IMU_PIN_SCK, IMU_PIN_MOSI, IMU_PIN_MISO);
 NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
-Buzzer fc_buzzer(15);
+Buzzer fc_buzzer(BUZZER_PIN);
 
 // --- Initializing PID ---
 PIDController roll_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
@@ -302,7 +284,7 @@ float roll_control_output = 0.0f, pitch_control_output = 0.0f, yaw_control_outpu
 int main() {
     sleep_ms(100);
     // --- Overclock the CPU to 250 MHz ---
-    set_sys_clock_khz(250000, true); // Set system clock to 250 MHz, and wait for it to stabilize
+    set_sys_clock_khz(CPU_FREQ_KHZ, true); // Set system clock and wait for it to stabilize
 
     // Initialize standard I/O for USB serial
     stdio_init_all();
@@ -351,12 +333,12 @@ int main() {
     DEBUG_PRINT("Launching Core 1 for Telemetry...\n");
     multicore_launch_core1(core1_entry);
 
-    // --- Configure MPU6000 Interrupt Pin ---
-    gpio_init(MPU_INT_PIN);
-    gpio_set_dir(MPU_INT_PIN, GPIO_IN);
-    gpio_pull_up(MPU_INT_PIN); // BMI160 INT pin is active low, so pull-up is needed
-    gpio_set_irq_enabled_with_callback(MPU_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &mpu_isr);
-    DEBUG_PRINT("BMI160 Interrupt configured on GP%d.\n", MPU_INT_PIN);
+    // --- Configure BMI160 Interrupt Pin ---
+    gpio_init(IMU_INT_PIN);
+    gpio_set_dir(IMU_INT_PIN, GPIO_IN);
+    gpio_pull_up(IMU_INT_PIN); // BMI160 INT pin is active low, so pull-up is needed
+    gpio_set_irq_enabled_with_callback(IMU_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &mpu_isr);
+    DEBUG_PRINT("BMI160 Interrupt configured on GP%d.\n", IMU_INT_PIN);
 
     // ====================================================================
     // GYROSCOPE CALIBRATION
@@ -369,7 +351,7 @@ int main() {
     float gyro_bias_x = 0.0f;
     float gyro_bias_y = 0.0f;
     float gyro_bias_z = 0.0f;
-    const int CALIBRATION_SAMPLES = 1000;
+
 
     // Discard the first few samples as the sensor settles
     for(int i=0; i<50; i++) {

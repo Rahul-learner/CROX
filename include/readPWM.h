@@ -1,4 +1,5 @@
 #pragma once
+#include "config.h"
 #include "hardware/pwm.h"
 #include "PwmIn.pio.h"
 #include "pico/stdlib.h"
@@ -6,15 +7,10 @@
 class ReadPWM {
 
 private:
-    #define NUM_CHANNELS 4
-    const uint16_t channel_gpio_pins[NUM_CHANNELS] = {9, 8, 7, 6};
+    const uint16_t channel_gpio_pins[NUM_CHANNELS] = {RC_CH1_PIN, RC_CH2_PIN, RC_CH3_PIN, RC_CH4_PIN};
     //volatile uint32_t channel[4] = {1500, 1500, 1000, 1500};
     uint32_t initial_channel[4] = {1500, 1500, 1002, 1500};
 
-    const float CONTROL_OUT_MIN = -30.0f;
-    const float CONTROL_OUT_MAX = 30.0f;
-    const float DEADBAND_US = 8.0f;   // +/- 8us from center
-    const float RC_CENTER_US = 1500.0f;
 
     float map_value(float x, float in_min, float in_max, float out_min, float out_max);
 

@@ -1,30 +1,8 @@
 #pragma once
+#include "config.h"
 #include <stdint.h>
 #include "hardware/uart.h"
-
-#define UART_ID uart0 // For UART connection
-#define UART_TX_PIN 16
-#define UART_RX_PIN 17
-#define BAUD_RATE 38400
-
-
-// 1. Define the Binary Packet Structure
-#pragma pack(push, 1) // Force 1-byte alignment
-struct TelemetryPacket {
-    uint8_t header1 = 0xAA;  // Sync byte 1
-    uint8_t header2 = 0xBB;  // Sync byte 2
-    int16_t roll;            // Roll * 100
-    int16_t pitch;           // Pitch * 100
-    int16_t yaw;             // Yaw * 100
-    int16_t dt;
-    int16_t desired_roll;
-    int16_t desired_pitch;
-    int16_t desired_yaw;
-    int16_t roll_pid;
-    int16_t pitch_pid;
-    int16_t yaw_pid;
-    uint8_t checksum;        // XOR of the payload
-};
+#include "nrf24_radio.h"  // Unified TelemetryPacket lives here
 
 // __attribute__((packed)) is critical here to prevent memory padding issues
 struct __attribute__((packed)) ConfigPacket {
@@ -37,7 +15,6 @@ struct __attribute__((packed)) ConfigPacket {
     int16_t pitch_bias;
     uint8_t checksum;
 };
-#pragma pack(pop) // Restore default alignment
 
 // Instantiate the packet globally to avoid reallocation
 extern TelemetryPacket telemetry_data;
@@ -60,3 +37,4 @@ public:
     // --- Non-Blocking Read Function ---
     void process_incoming_config(PIDController& roll_pid, PIDController& pitch_pid, PIDController& yaw_pid, float& roll_bias, float& pitch_bias);
 };
+

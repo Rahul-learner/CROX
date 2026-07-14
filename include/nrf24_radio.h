@@ -1,17 +1,13 @@
 #ifndef NRF24_TELEMETRY_H
 #define NRF24_TELEMETRY_H
 
+#include "config.h"
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include <cstdint>
 #include <stdio.h>
 #include <string.h>
 
-// --- PACKET HEADERS ---
-#define TELEMETRY_HEADER_1 0xAA
-#define TELEMETRY_HEADER_2 0x55
-#define PID_HEADER_1       0xBB
-#define PID_HEADER_2       0x66
 
 #pragma pack(push, 1)
 
