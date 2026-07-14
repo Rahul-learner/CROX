@@ -1,0 +1,215 @@
+#include <hardware/timer.h>
+#include <stdio.h>        // For standard input/output functions like printf
+#include "pico/stdio_usb.h"
+#include <string.h>       // For memset
+#include "pico/stdlib.h"  // For general Pico standard library functions (gpio_init, sleep_ms, etc.)
+#include "hardware/gpio.h" // For GPIO (General Purpose Input/Output) functions and interrupts
+#include "pico/time.h"    // For time-related functions like sleep_us, make_timeout_time_ms
+#include "hardware/clocks.h" // For setting CPU frequency (overclocking)
+#include "stdint.h"
+#include "pico/multicore.h"
+#include "calibration.h"
+#include "EKF.h"
+#include "config.h"
+#include "readIMU.h"
+#include "readPWM.h"
+#include "writePWM.h"
+#include "PID.h"
+#include "buzzer.h"
+#include "nrf24_radio.h"
+#include "blackbox.h"
+
+// Core logic includes
+#include "core/hardware_setup.h"
+#include "core/flight_tasks.h"
+#include "core/comm_tasks.h"
+#include "core/sitl.h"
+
+// Create a custom print macro
+#ifdef DEBUG_MODE
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...) // Does absolutely nothing when flying
+#endif
+
+// --- Define the GPIO pin for the onboard LED ---
+#ifndef PICO_DEFAULT_LED_PIN
+#define PICO_DEFAULT_LED_PIN 25
+#endif
+
+float bias_roll = DEFAULT_BIAS_ROLL;
+float bias_pitch = DEFAULT_BIAS_PITCH;
+float bias_yaw = DEFAULT_BIAS_YAW;
+
+float q_gyro = DEFAULT_Q_GYRO;
+float q_bias = DEFAULT_Q_BIAS;
+float r_accel = DEFAULT_R_ACCEL;
+
+// PID values (initialised from config defaults, tuneable at runtime)
+float pid_p_roll_pitch = DEFAULT_PID_P_ROLL_PITCH;
+float pid_i_roll_pitch = DEFAULT_PID_I_ROLL_PITCH;
+float pid_d_roll_pitch = DEFAULT_PID_D_ROLL_PITCH;
+float pid_p_yaw = DEFAULT_PID_P_YAW;
+float pid_i_yaw = DEFAULT_PID_I_YAW;
+float pid_d_yaw = DEFAULT_PID_D_YAW;
+
+BlackboxPacket bb_packet;
+
+// --- Shared Variables for Dual-Core Communication ---
+volatile bool send_telemetry = false;
+volatile float shared_roll = 0.0f;
+volatile float shared_pitch = 0.0f;
+volatile float shared_yaw = 0.0f;
+volatile float shared_rc_roll = 0.0f;
+volatile float shared_rc_pitch = 0.0f;
+volatile float shared_rc_yaw = 0.0f;
+volatile float shared_pid_roll = 0.0f;
+volatile float shared_pid_pitch = 0.0f;
+volatile float shared_pid_yaw = 0.0f;
+volatile float shared_dt_us = 0.0f;
+
+// receiver data
+float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+// Global variables for filtered data
+float roll = 0.0f, pitch = 0.0f, yaw = 0.0f; // Added yaw
+volatile bool imu_data_ready = false; // Flag set by interrupt handler
+bool was_armed = false;
+
+// Global variable for tracking time
+uint64_t last_update_ekf_us = 0;
+uint64_t last_update_pid_us = 0;
+uint32_t last_update_telemetry_us = 0;
+
+// Radio addresses (from config)
+extern const uint8_t drone_tx_addr[5] = DRONE_TX_ADDR;
+extern const uint8_t drone_rx_addr[5] = DRONE_RX_ADDR;
+
+// --- Initialize Class ---
+Blackbox blackbox;
+BMI160 imu(IMU_SPI_PORT, IMU_PIN_CS, IMU_PIN_SCK, IMU_PIN_MOSI, IMU_PIN_MISO);
+NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
+Buzzer fc_buzzer(BUZZER_PIN);
+
+// --- Initializing PID ---
+PIDController roll_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+PIDController pitch_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+PIDController yaw_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
+
+float roll_control_output = 0.0f, pitch_control_output = 0.0f, yaw_control_output = 0.0f;
+
+int main() {
+    init_hardware();
+
+    ReadPWM receiver;
+    WritePWM motor;
+
+    // ====================================================================
+    // GYROSCOPE CALIBRATION
+    // ====================================================================
+    DEBUG_PRINT("Calibrating Gyroscope... DO NOT MOVE THE DRONE!\n");
+    fc_buzzer.play_tone(NOTE_C5);
+    sleep_ms(100);
+    fc_buzzer.stop();
+
+    float gyro_bias_x = 0.0f;
+    float gyro_bias_y = 0.0f;
+    float gyro_bias_z = 0.0f;
+
+    calibrate_gyro(imu, gyro_bias_x, gyro_bias_y, gyro_bias_z);
+
+    DEBUG_PRINT("Calibration Complete! Biases: X:%.4f Y:%.4f Z:%.4f\n", gyro_bias_x, gyro_bias_y, gyro_bias_z);
+
+    // Play the success startup tune!
+    fc_buzzer.play_melody(Tunes::startup, Tunes::startup_len);
+    // ====================================================================
+
+    // Initialize the Filter
+    QuaternionEKF filter;
+
+    bool tune_EKF = false;
+    if (tune_EKF) {
+        while (!stdio_usb_connected()) {
+            sleep_ms(100);
+        }
+        stdio_set_translate_crlf(&stdio_usb, false);
+        sleep_ms(1000);
+        gpio_put(PICO_DEFAULT_LED_PIN, 1);
+        record_readings_for_SITL(imu);
+        gpio_put(PICO_DEFAULT_LED_PIN, 0);
+        stdio_set_translate_crlf(&stdio_usb, true);
+    }
+
+    // Re-initialize last_update_us after settling
+    last_update_ekf_us = time_us_64();
+    last_update_pid_us = time_us_64();
+    uint64_t last_update_rc_us = time_us_64();
+    bool first_throttle_on = true;
+    bool run_accel_update = true;
+    bool blackbox_updated = false;
+    bool blackbox_dumped = false;
+
+    float dt_ekf, dt_pid;
+    uint32_t loop_counter = 0;
+
+    // --- Main Loop ---
+    while (true) {
+
+        uint64_t current_pwm_update = time_us_64();
+        if ((current_pwm_update - last_update_rc_us) > 1000000/50) {
+            receiver.read_pwm(receiver_pwm);
+
+            // reverse the roll
+            receiver_pwm[0] *= -1;
+
+            last_update_rc_us = current_pwm_update;
+        }
+        
+        if (receiver_pwm[2] > 1005.0f) {
+            was_armed = true;
+            if (first_throttle_on) {
+                fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
+                blackbox.clear_blackbox_data();
+
+                while (receiver_pwm[2] > 1051.0f) {
+                    motor.reset();
+                    fc_buzzer.play_tone(1);
+                    DEBUG_PRINT("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
+                    gpio_put(PICO_DEFAULT_LED_PIN, 1);
+                    sleep_ms(200);
+                    receiver.read_throttle(receiver_pwm[2]);
+                    gpio_put(PICO_DEFAULT_LED_PIN, 0);
+                    fc_buzzer.stop();
+                    sleep_ms(200);
+                }
+                first_throttle_on = false;
+                last_update_ekf_us = time_us_64();
+                continue;
+            } else {
+                gpio_put(PICO_DEFAULT_LED_PIN, 1);
+            }
+            
+            // Only process data if the IMU interrupt indicates new data is ready
+            if (imu_data_ready) {
+                // Reset the flag immediately to avoid missing subsequent interrupts
+                imu_data_ready = false;
+                loop_counter++;
+
+                uint64_t start = time_us_64();
+                float gz_rate = 0.0f;
+                
+                update_sensors_and_ekf(filter, gyro_bias_x, gyro_bias_y, gyro_bias_z, dt_ekf, run_accel_update, gz_rate);
+                update_pid_and_motors(motor, gz_rate, dt_pid);
+                
+                uint64_t end = time_us_64();
+                
+                update_telemetry_and_blackbox(motor, gz_rate, dt_ekf, dt_pid, end, blackbox_updated);
+            }
+
+        } else {
+            handle_disarmed_state(motor, filter, blackbox_updated, blackbox_dumped, first_throttle_on);
+        }
+    }
+
+    return 0;
+}

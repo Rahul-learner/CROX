@@ -3,6 +3,10 @@
 #include "writePWM.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
+#include "readIMU.h"
+#include "config.h"
+
+extern volatile bool imu_data_ready;
 
 class IMU {
 public:
@@ -92,4 +96,33 @@ void run_noise_calibration(IMU& mpu6050,HMC5883L& hmc5883l, WritePWM& motor) {
     printf("Mag Variance (R_mag): X: %f, Y: %f, Z: %f\n", m_var[0], m_var[1], m_var[2]);
     printf("--------------------------------------\n\n");
 
+}
+
+void calibrate_gyro(BMI160& imu, float& gyro_bias_x, float& gyro_bias_y, float& gyro_bias_z) {
+    gyro_bias_x = 0.0f;
+    gyro_bias_y = 0.0f;
+    gyro_bias_z = 0.0f;
+
+    // Discard the first few samples as the sensor settles
+    for(int i=0; i<50; i++) {
+        while (!imu_data_ready) { tight_loop_contents(); }
+        imu_data_ready = false;
+    }
+
+    for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
+        while (!imu_data_ready) { tight_loop_contents(); } // Wait for interrupt
+        imu_data_ready = false;
+
+        float ax, ay, az, gx, gy, gz;
+        imu.readData(&ax, &ay, &az, &gx, &gy, &gz);
+
+        gyro_bias_x += gx;
+        gyro_bias_y += gy;
+        gyro_bias_z += gz;
+    }
+
+    // Average out the errors
+    gyro_bias_x /= CALIBRATION_SAMPLES;
+    gyro_bias_y /= CALIBRATION_SAMPLES;
+    gyro_bias_z /= CALIBRATION_SAMPLES;
 }

@@ -16,7 +16,11 @@ project(CROX C CXX ASM)
 pico_sdk_init()
 
 add_executable(CROX
-    src/main.cpp
+    main.cpp
+    src/core/hardware_setup.cpp
+    src/core/flight_tasks.cpp
+    src/core/comm_tasks.cpp
+    src/core/sitl.cpp
     src/EKF.cpp
     include/EKF.h
     src/readIMU.cpp
