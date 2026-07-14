@@ -1,4 +1,5 @@
 #include "telemetry.h"
+#include "config.h"
 #include "PID.h"
 #include <stdio.h>
 #include "pico/stdlib.h"
@@ -109,8 +110,8 @@ void Telemetry::process_incoming_config(PIDController& roll_pid, PIDController& 
                 roll_bias = incomingConfig.roll_bias / 100.0f;
                 pitch_bias = incomingConfig.pitch_bias / 100.0f;
 
-                printf("SUCCESS! New Roll Bias updated to: %.2f\\n", roll_bias);
-                printf("SUCCESS! New Pitch Bias updated to: %.2f\\n", pitch_bias);
+                DEBUG_PRINT("SUCCESS! New Roll Bias updated to: %.2f\\n", roll_bias);
+                DEBUG_PRINT("SUCCESS! New Pitch Bias updated to: %.2f\\n", pitch_bias);
 
                 // Updating the PID
                 roll_pid.set_pid(rp_p, rp_i, rp_d);
@@ -119,7 +120,7 @@ void Telemetry::process_incoming_config(PIDController& roll_pid, PIDController& 
 
 
             } else {
-                printf("Config Checksum failed! Electrical noise detected.\\n");
+                DEBUG_PRINT("Config Checksum failed! Electrical noise detected.\\n");
             }
         }
     }

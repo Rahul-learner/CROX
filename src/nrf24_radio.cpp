@@ -1,4 +1,5 @@
 #include "nrf24_radio.h"
+#include "config.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
@@ -67,7 +68,7 @@ bool NRF24::checkConnection() {
 
     if (response == test_channel) return true;
 
-    printf("[NRF24 ERROR] SPI Verification Failed! Expected: %d, Got: %d\n", test_channel, response);
+    DEBUG_PRINT("[NRF24 ERROR] SPI Verification Failed! Expected: %d, Got: %d\n", test_channel, response);
     return false;
 }
 
@@ -236,7 +237,7 @@ bool NRF24::readPID(PIDTuningPacket* data) {
     for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
 
     if (calc_cs != data->checksum) {
-        printf("[NRF24 ERROR] PID Checksum Mismatch!\n");
+        DEBUG_PRINT("[NRF24 ERROR] PID Checksum Mismatch!\n");
         writeCmd(FLUSH_RX); // Flush to be safe
         return false;
     }
@@ -250,7 +251,7 @@ bool NRF24::readPID(PIDTuningPacket* data) {
 
 bool NRF24::sendPID(PIDTuningPacket* data) {
     if (!isReady()) {
-        printf("[NRF24 ERROR] Radio busy, skipping PID packet\n");
+        DEBUG_PRINT("[NRF24 ERROR] Radio busy, skipping PID packet\n");
         return false;
     }
 
@@ -280,7 +281,7 @@ bool NRF24::sendPID(PIDTuningPacket* data) {
         if (status & 0x30) break;
 
         if (time_us_32() - start_time > 25000) {
-            printf("[NRF24 ERROR] TX Timeout!\n");
+            DEBUG_PRINT("[NRF24 ERROR] TX Timeout!\n");
             break;
         }
     }
@@ -290,7 +291,7 @@ bool NRF24::sendPID(PIDTuningPacket* data) {
     writeReg(STATUS, 0x30);
 
     if (status & 0x10) {
-        printf("[NRF24 ERROR] PID TX MAX_RT (Max Retries) hit! Drone offline.\n");
+        DEBUG_PRINT("[NRF24 ERROR] PID TX MAX_RT (Max Retries) hit! Drone offline.\n");
         writeCmd(FLUSH_TX);
     }
 

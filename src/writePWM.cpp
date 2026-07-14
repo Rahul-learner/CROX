@@ -1,4 +1,5 @@
 #include "writePWM.h"
+#include "config.h"
 #include <stdio.h>
 #include "hardware/clocks.h"
 
@@ -34,7 +35,7 @@ void WritePWM::init_esc_pwm_channel(uint gpio_pin) {
     pwm_config_set_wrap(&config, PWM_WRAP_VALUE);
     pwm_init(slice_num, &config, true);
 
-    printf("PWM configured on GP%d (Slice %d, Channel %d) at %d Hz.\\n", gpio_pin, slice_num, channel_num, PWM_FREQUENCY_HZ);
+    DEBUG_PRINT("PWM configured on GP%d (Slice %d, Channel %d) at %d Hz.\\n", gpio_pin, slice_num, channel_num, PWM_FREQUENCY_HZ);
 }
 
 WritePWM::WritePWM() {
@@ -42,7 +43,7 @@ WritePWM::WritePWM() {
     init_esc_pwm_channel(MOTOR2_PWM_PIN);
     init_esc_pwm_channel(MOTOR3_PWM_PIN);
     init_esc_pwm_channel(MOTOR4_PWM_PIN);
-    printf("Sending MIN throttle to arm ESCs...\\n");
+    DEBUG_PRINT("Sending MIN throttle to arm ESCs...\\n");
     set_esc_pulse_us(MOTOR1_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR2_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR3_PWM_PIN, ESC_MIN_PULSE_US);

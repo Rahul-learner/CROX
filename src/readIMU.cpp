@@ -1,4 +1,5 @@
 #include "readIMU.h"
+#include "config.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
@@ -50,10 +51,10 @@ bool BMI160::checkConnection() {
     uint8_t id = readRegister(REG_CHIP_ID);
 
     if (id == EXPECTED_CHIP_ID) {
-        printf("BMI160 verified successfully (ID: 0x%02X).\\n", id);
+        DEBUG_PRINT("BMI160 verified successfully (ID: 0x%02X).\\n", id);
         return true;
     } else {
-        printf("CRITICAL ERROR: BMI160 not found! WHO_AM_I returned: 0x%02X\\n", id);
+        DEBUG_PRINT("CRITICAL ERROR: BMI160 not found! WHO_AM_I returned: 0x%02X\\n", id);
         return false;
     }
 }
@@ -84,14 +85,14 @@ void BMI160::init() {
 
     // 0x14 means BOTH sensors are awake. If not, aggressively loop until they are.
     while (pmu != 0x14) {
-        printf("PMU stubborn (0x%02X). Forcing Wakeup...\\n", pmu);
+        DEBUG_PRINT("PMU stubborn (0x%02X). Forcing Wakeup...\\n", pmu);
         writeRegister(REG_CMD, 0x11);
         sleep_ms(50);
         writeRegister(REG_CMD, 0x15);
         sleep_ms(100);
         pmu = readRegister(REG_PMU_STATUS);
     }
-    printf("Sensors Power Online (0x14).\\n");
+    DEBUG_PRINT("Sensors Power Online (0x14).\\n");
 
     // 4. NOW it is safe to configure the ranges and speeds
     writeRegister(REG_ACCEL_RANGE, 0x08); // +/- 8G

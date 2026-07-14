@@ -1,4 +1,5 @@
 #include "core/flight_tasks.h"
+#include "config.h"
 #include "core/globals.h"
 #include "pico/stdio_usb.h"
 #include "pico/stdlib.h"

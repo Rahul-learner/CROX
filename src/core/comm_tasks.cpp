@@ -1,4 +1,5 @@
 #include "core/comm_tasks.h"
+#include "config.h"
 #include "core/globals.h"
 #include "pico/time.h"
 #include "pico/stdlib.h"
@@ -17,23 +18,23 @@
 void process_command(char* buffer) {
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
-        printf("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
+        DEBUG_PRINT("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
     }
     // NEW: Roll & Pitch PID
     else if (strncmp(buffer, "PID_RP,", 7) == 0) {
         sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
-        printf("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        DEBUG_PRINT("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
         pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
     }
     // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
-        printf("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
+        DEBUG_PRINT("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
         yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
-        printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
+        DEBUG_PRINT("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
     }
 }
 

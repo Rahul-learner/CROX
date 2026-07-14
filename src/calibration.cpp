@@ -40,8 +40,8 @@ void calibrate_receiver(ReadPWM& receiver, float& rc_roll_bias, float& rc_pitch_
 }
 
 void run_noise_calibration(IMU& mpu6050,HMC5883L& hmc5883l, WritePWM& motor) {
-    printf("\n--- STARTING EKF NOISE CALIBRATION ---\n");
-    printf("Keep the drone perfectly still with motors running (NO PROPS!)...\n");
+    DEBUG_PRINT("\n--- STARTING EKF NOISE CALIBRATION ---\n");
+    DEBUG_PRINT("Keep the drone perfectly still with motors running (NO PROPS!)...\n");
     motor.update_motors_pwm(1800.0f, 0.0f, 0.0f, 0.0f);
 
     const int SAMPLES = 1000;
@@ -90,11 +90,11 @@ void run_noise_calibration(IMU& mpu6050,HMC5883L& hmc5883l, WritePWM& motor) {
     }
 
     // 5. PRINT RESULTS TO TERMINAL
-    printf("\nCALIBRATION COMPLETE!\n");
-    printf("Copy these values into your EKF R Matrices:\n");
-    printf("Accel Variance (R): X: %f, Y: %f, Z: %f\n", a_var[0], a_var[1], a_var[2]);
-    printf("Mag Variance (R_mag): X: %f, Y: %f, Z: %f\n", m_var[0], m_var[1], m_var[2]);
-    printf("--------------------------------------\n\n");
+    DEBUG_PRINT("\nCALIBRATION COMPLETE!\n");
+    DEBUG_PRINT("Copy these values into your EKF R Matrices:\n");
+    DEBUG_PRINT("Accel Variance (R): X: %f, Y: %f, Z: %f\n", a_var[0], a_var[1], a_var[2]);
+    DEBUG_PRINT("Mag Variance (R_mag): X: %f, Y: %f, Z: %f\n", m_var[0], m_var[1], m_var[2]);
+    DEBUG_PRINT("--------------------------------------\n\n");
 
 }
 

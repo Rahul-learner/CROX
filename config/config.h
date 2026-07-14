@@ -122,4 +122,13 @@
 #define TELEM_UART_RX_PIN 13 // Shared with RADIO_CSN
 #define TELEM_BAUD_RATE 38400
 
+#include <stdio.h>
+#ifndef DEBUG_PRINT
+#ifdef DEBUG_MODE
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+#endif
+
 #endif // CONFIG_H
