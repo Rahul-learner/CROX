@@ -25,7 +25,6 @@ add_executable(CROX
     PwmIn.pio
     buzzer.h
     nrf24_radio.h
-    msp_protocol.h
     blackbox.h
     blackbox.cpp
 )

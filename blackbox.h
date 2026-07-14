@@ -19,6 +19,10 @@ struct BlackboxPacket {
     int16_t pid_roll;     
     int16_t pid_pitch;
     int16_t pid_yaw;
+    uint16_t rc_roll;      // 1000 - 2000
+    uint16_t rc_pitch;
+    uint16_t rc_yaw;
+    uint16_t rc_throttle;  // 1000 - 2000
     uint16_t motor1;      // 1000 - 2000
     uint16_t motor2;
     uint16_t motor3;

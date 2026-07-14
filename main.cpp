@@ -15,7 +15,7 @@
 #include "PID.h"
 #include "buzzer.h"
 #include "nrf24_radio.h"
-#include "msp_protocol.h"
+#include "blackbox.h"
 
 // #define DEBUG_MODE
 
@@ -25,8 +25,6 @@
 #else
 #define DEBUG_PRINT(...) // Does absolutely nothing when flying
 #endif
-
-bool pids_updated_via_msp = false;
 
 // --- Define the GPIO pin for the onboard LED ---
 #ifndef PICO_DEFAULT_LED_PIN
@@ -52,6 +50,8 @@ float pid_d_roll_pitch = 0.47f;
 float pid_p_yaw = 1.0f;
 float pid_i_yaw = 0.0f;
 float pid_d_yaw = 0.0f; // No d gain for yaw
+
+BlackboxPacket bb_packet;
 
 // --- Shared Variables for Dual-Core Communication ---
 volatile bool send_telemetry = false;
@@ -108,7 +108,7 @@ const uint8_t drone_tx_addr[5] = {'G', 'R', 'N', 'D', '1'}; // Sending to Ground
 const uint8_t drone_rx_addr[5] = {'D', 'R', 'O', 'N', '1'}; // Receiving from Ground
 
 // --- Initialize Class ---
-MSP_Protocol msp_bridge;
+Blackbox blackbox;
 BMI160 imu(SPI_PORT, PIN_CS, PIN_SCK, PIN_MOSI, PIN_MISO);
 NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
 Buzzer fc_buzzer(15);
@@ -273,7 +273,7 @@ void core1_entry() {
 
         // Send Telemetry at 10Hz
         uint32_t current_time = time_us_32();
-        if (send_telemetry && (current_time - last_telemetry_time > 20000)) {
+        if (send_telemetry && (current_time - last_telemetry_time > 100000)) {
             radio_restarted = false;
             last_telemetry_time = current_time;
 
@@ -290,19 +290,6 @@ void core1_entry() {
             my_telemetry.dt_s     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
 
             radio.sendTelemetry(&my_telemetry);
-            // printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt: %f\n",
-            //        my_telemetry.roll / 100.0f,
-            //        my_telemetry.pitch / 100.0f,
-            //        my_telemetry.yaw / 100.0f,
-            //        my_telemetry.rc_roll / 100.0f,
-            //        my_telemetry.rc_pitch / 100.0f,
-            //        my_telemetry.rc_yaw / 100.0f,
-            //        my_telemetry.pid_roll / 100.0f,
-            //        my_telemetry.pid_pitch / 100.0f,
-            //        my_telemetry.pid_yaw / 100.0f,
-            //        my_telemetry.dt_us / 100.0f);
-
-
         }
 
         // Tiny sleep to prevent Core 1 from aggressively locking the system bus
@@ -437,6 +424,8 @@ int main() {
     uint64_t last_update_print_us = time_us_64();
     bool first_throttle_on = true;
     bool run_accel_update = true;
+    bool blackbox_updated = false;
+    bool blackbox_dumped = false;
 
     float dt_ekf, dt_pid;
     uint32_t loop_counter = 0;
@@ -460,6 +449,7 @@ int main() {
             was_armed = true;
             if (first_throttle_on) {
                 fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
+                blackbox.clear_blackbox_data();
 
                 while (receiver_pwm[2] > 1051.0f) {
                     motor.reset();
@@ -510,19 +500,6 @@ int main() {
                 yaw -= bias_yaw;
                 gz = gz * 180.0f / 3.14159265358979323846f;
 
-                msp_bridge.update(roll, pitch, yaw, ax, ay, az, gx, gy, gz);
-                if (pids_updated_via_msp) {
-                    roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                    pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                    yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
-
-                    fc_buzzer.play_tone(NOTE_A5);
-                    sleep_ms(100);
-                    fc_buzzer.stop();
-
-                    pids_updated_via_msp = false;
-                }
-
                 uint64_t current_time_pid_us = time_us_64();
                 if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
@@ -553,6 +530,26 @@ int main() {
                     shared_pid_yaw = yaw_control_output;
                     shared_dt_us = dt_ekf;
                     send_telemetry = true;
+
+                    // update the blackbox packet
+                    bb_packet.roll = (int16_t)(roll * 100.0f);
+                    bb_packet.pitch = (int16_t)(pitch * 100.0f);
+                    bb_packet.yaw_rate = (int16_t)(gz * 100.0f);
+                    bb_packet.pid_roll = (int16_t)(roll_control_output * 100.0f);
+                    bb_packet.pid_pitch = (int16_t)(pitch_control_output * 100.0f);
+                    bb_packet.pid_yaw = (int16_t)(yaw_control_output * 100.0f);
+                    bb_packet.rc_roll = (int16_t)(receiver_pwm[0] * 100.0f);
+                    bb_packet.rc_pitch = (int16_t)(receiver_pwm[1] * 100.0f);
+                    bb_packet.rc_yaw = (int16_t)(receiver_pwm[3] * 100.0f);
+                    bb_packet.rc_throttle = (int16_t)(receiver_pwm[2]);
+                    bb_packet.motor1 = (uint16_t)(motor.motor1_speed);
+                    bb_packet.motor2 = (uint16_t)(motor.motor2_speed);
+                    bb_packet.motor3 = (uint16_t)(motor.motor3_speed);
+                    bb_packet.motor4 = (uint16_t)(motor.motor4_speed);
+                    bb_packet.dt_us = (uint16_t)((end / 1000000.0f) * 100.0f);
+                    blackbox.write_packet(bb_packet);
+                    blackbox_updated = true;
+
                     DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %f, RC_Pitch: %f, RC_Yaw: %f, PID_Roll: %f, PID_Pitch: %f, PID_Yaw: %f, dt_pid: %f, dt_ekf: %f\n",
                                 roll, pitch, gz, receiver_pwm[0], receiver_pwm[1], receiver_pwm[3], roll_control_output, pitch_control_output, yaw_control_output,
                                 dt_pid, dt_ekf);
@@ -563,7 +560,18 @@ int main() {
 
         } else {
             motor.reset();
-
+            // write the blackbox to the flash
+            if (blackbox_updated) {
+                blackbox.write_blackbox_to_flash();
+                blackbox_updated = false;
+            }
+            if (!blackbox_updated && !blackbox_dumped && stdio_usb_connected()) {
+                blackbox.dump_flash_to_usb();
+                blackbox_dumped = true;
+            }
+            if (!stdio_usb_connected()) {
+                blackbox_dumped = false;
+            }
             send_telemetry = false;
             filter.reset();
             roll_pid.reset();

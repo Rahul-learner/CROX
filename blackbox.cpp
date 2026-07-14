@@ -10,6 +10,11 @@ void Blackbox::clear_blackbox_data() {
     head = 0;
     tail = 0;
     count = 0;
+    
+    // Wipe RAM clean with 0xFF. 
+    // 0xFF (-1) is the standard value for "Empty Flash". 
+    // This guarantees your dump_flash_to_usb() function stops correctly!
+    memset(packet_buffer, 0xFF, sizeof(BlackboxPacket) * MAX_BLACKBOX_PACKETS);
 }
 
 void Blackbox::write_packet(const BlackboxPacket& packet) {
@@ -82,21 +87,34 @@ void Blackbox::write_blackbox_to_flash() {
 
 void Blackbox::dump_flash_to_usb() {
     printf("\n--- BEGIN BLACKBOX DUMP ---\n");
-    printf("Roll,Pitch,YawRate,PID_R,PID_P,PID_Y,M1,M2,M3,M4,dt_us\n");
+    printf("Roll,Pitch,YawRate,PID_R,PID_P,PID_Y,RC_Roll,RC_Pitch,RC_Yaw,RC_Throttle,M1,M2,M3,M4,dt_us\n");
 
+    // Point directly to the physical flash memory
     const uint8_t* flash_data = (const uint8_t*)(XIP_BASE + FLASH_TARGET_OFFSET);
     size_t byte_index = 0;
 
-    // Read the perfectly linearized structs directly from the Flash!
-    for (size_t i = 0; i < count; i++) {
+    // Loop through the maximum possible packets that could fit in our sector
+    for (size_t i = 0; i < MAX_BLACKBOX_PACKETS; i++) {
         BlackboxPacket p;
         memcpy(&p, &flash_data[byte_index], sizeof(BlackboxPacket));
-        byte_index += sizeof(BlackboxPacket);
+        
+        // --- POWER LOSS FIX ---
+        // Empty flash memory defaults to all 1s (0xFF). 
+        // If the dt_us (timestamp) reads as 65535 (0xFFFF), it means 
+        // we have reached the end of the recorded flight data!
+        if (p.dt_us == 0xFFFF) {
+            printf("--- REACHED END OF FLIGHT DATA (%d packets) ---\n", i);
+            break; 
+        }
 
-        printf("%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%u\n",
+        // write the packet to USB
+        printf("%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                p.roll, p.pitch, p.yaw_rate, 
                p.pid_roll, p.pid_pitch, p.pid_yaw, 
+               p.rc_roll, p.rc_pitch, p.rc_yaw, p.rc_throttle,
                p.motor1, p.motor2, p.motor3, p.motor4, p.dt_us);
+               
+        byte_index += sizeof(BlackboxPacket);
     }
     printf("--- END BLACKBOX DUMP ---\n");
 }

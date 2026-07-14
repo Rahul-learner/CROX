@@ -57,6 +57,11 @@ private:
     }
 
 public:
+    uint32_t motor1_speed = 1000;
+    uint32_t motor2_speed = 1000;
+    uint32_t motor3_speed = 1000;
+    uint32_t motor4_speed = 1000;
+
     WritePWM() {
         init_esc_pwm_channel(MOTOR1_PWM_PIN);
         init_esc_pwm_channel(MOTOR2_PWM_PIN);
@@ -81,10 +86,10 @@ public:
         int32_t m4 = throttle - roll + pitch + yaw; // M4: Rear Right (CW)
 
         // FIX 3: Add constraints to prevent ESC desync if PID spikes outside 1000us-2000us
-        uint32_t motor1_speed = m1 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m1 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m1);
-        uint32_t motor2_speed = m2 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m2 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m2);
-        uint32_t motor3_speed = m3 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m3 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m3);
-        uint32_t motor4_speed = m4 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m4 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m4);
+        motor1_speed = m1 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m1 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m1);
+        motor2_speed = m2 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m2 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m2);
+        motor3_speed = m3 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m3 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m3);
+        motor4_speed = m4 > ESC_MAX_PULSE_US ? ESC_MAX_PULSE_US : (m4 < ESC_MIN_PULSE_US ? ESC_MIN_PULSE_US : m4);
 
         set_esc_pulse_us(MOTOR1_PWM_PIN, motor1_speed);
         set_esc_pulse_us(MOTOR2_PWM_PIN, motor2_speed);
