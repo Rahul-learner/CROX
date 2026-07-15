@@ -7,7 +7,7 @@
 // SYSTEM
 // =============================================================================
 #define CPU_FREQ_KHZ 250000
-// #define DEBUG_MODE                     // Uncomment to enable debug printf
+// #define DEBUG_MODE // Uncomment to enable debug printf
 #define CALIBRATION_SAMPLES 1000
 
 // =============================================================================
@@ -80,24 +80,24 @@
 // PID DEFAULTS (Roll & Pitch)
 // =============================================================================
 #define DEFAULT_PID_P_ROLL_PITCH 1.75f
-#define DEFAULT_PID_I_ROLL_PITCH 0.04f
+#define DEFAULT_PID_I_ROLL_PITCH 0.05f
 #define DEFAULT_PID_D_ROLL_PITCH 0.47f
 
 // PID DEFAULTS (Yaw)
-#define DEFAULT_PID_P_YAW 1.0f
+#define DEFAULT_PID_P_YAW 1.3f
 #define DEFAULT_PID_I_YAW 0.0f
 #define DEFAULT_PID_D_YAW 0.0f
 
 // PID Constraints
 #define PID_INTEGRAL_LIMIT 400.0f
-#define PID_D_CUTOFF_HZ 25.0f
+#define PID_D_CUTOFF_HZ 25.0f   // increase for high frequency noise, decrease for low frequency noise
 
 // =============================================================================
 // EKF DEFAULTS
 // =============================================================================
-#define DEFAULT_Q_GYRO 0.001f
-#define DEFAULT_Q_BIAS 0.00001f
-#define DEFAULT_R_ACCEL 1.5f
+#define DEFAULT_Q_GYRO 0.001f // increase for gyro trust, decrease for noisey gyro
+#define DEFAULT_Q_BIAS 0.00001f // increase for gyro bias trust, decrease for noisey gyro bias
+#define DEFAULT_R_ACCEL 20.0f   // measurement noise, larger value means less trust in measurement
 
 // =============================================================================
 // ANGLE BIAS DEFAULTS
