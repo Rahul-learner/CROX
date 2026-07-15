@@ -104,6 +104,9 @@ int main() {
     ReadPWM receiver;
     WritePWM motor;
 
+    bool calibrate_esc = false; // Set to true to run ESC calibration once
+    motor.calibrate_escs(calibrate_esc);
+
     // ====================================================================
     // GYROSCOPE CALIBRATION
     // ====================================================================
