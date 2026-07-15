@@ -1,40 +1,54 @@
+#include <cstdint>
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
-#include "config.h"
-#include "nrf24_radio.h"
+#include "nrf24_radio.h" // Fixed include (it is nrf24_radio.h in your project)
 
-// Store current tuning values (initialized to defaults from config.h)
-float gs_kp_roll_pitch = DEFAULT_PID_P_ROLL_PITCH;
-float gs_ki_roll_pitch = DEFAULT_PID_I_ROLL_PITCH;
-float gs_kd_roll_pitch = DEFAULT_PID_D_ROLL_PITCH;
-float gs_kp_yaw = DEFAULT_PID_P_YAW;
-float gs_ki_yaw = DEFAULT_PID_I_YAW;
-float gs_kd_yaw = DEFAULT_PID_D_YAW;
-float gs_bias_roll = DEFAULT_BIAS_ROLL;
-float gs_bias_pitch = DEFAULT_BIAS_PITCH;
-float gs_bias_yaw = DEFAULT_BIAS_YAW;
+// --- NRF24 Hardware Pin Definitions ---
+#define NRF_SPI_PORT spi1
+#define NRF_MISO_PIN 12
+#define NRF_CSN_PIN  13
+#define NRF_SCK_PIN  10
+#define NRF_MOSI_PIN 11
+#define NRF_CE_PIN   14
 
-bool send_pid_update = false;
+NRF24 radio(NRF_SPI_PORT, NRF_CE_PIN, NRF_CSN_PIN, NRF_SCK_PIN, NRF_MOSI_PIN, NRF_MISO_PIN);
 
-// Parse the received usb string from the ground station PC
+// --- Tuning Variables & Flags ---
+float bias_roll = 0.0f, bias_pitch = 0.0f, bias_yaw = 0.0f;
+float q_gyro = 0.0f, q_bias = 0.0f, r_accel = 0.0f;
+float pid_p_roll_pitch = 1.0f, pid_i_roll_pitch = 0.0f, pid_d_roll_pitch = 0.0f;
+float pid_p_yaw = 0.0f, pid_i_yaw = 0.0f, pid_d_yaw = 0.0f;
+bool send_tuning_flag = false;
+bool radio_restarted = false;
+
+// ============================================================================
+// USB SERIAL COMMAND PARSING
+// ============================================================================
+
+// Parse the received usb string
 void process_command(char* buffer) {
-    if (strncmp(buffer, "PID_RP,", 7) == 0) {
-        sscanf(buffer, "PID_RP,%f,%f,%f", &gs_kp_roll_pitch, &gs_ki_roll_pitch, &gs_kd_roll_pitch);
-        printf("GS ACK PID_RP: %f, %f, %f\n", gs_kp_roll_pitch, gs_ki_roll_pitch, gs_kd_roll_pitch);
-        send_pid_update = true;
+    if (strncmp(buffer, "EKF,", 4) == 0) {
+        sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
+        printf("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
     }
+    // NEW: Roll & Pitch PID
+    else if (strncmp(buffer, "PID_RP,", 7) == 0) {
+        sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
+        printf("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+    }
+    // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
-        sscanf(buffer, "PID_YAW,%f,%f,%f", &gs_kp_yaw, &gs_ki_yaw, &gs_kd_yaw);
-        printf("GS ACK PID_YAW: %f, %f, %f\n", gs_kp_yaw, gs_ki_yaw, gs_kd_yaw);
-        send_pid_update = true;
+        sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
+        printf("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
-        sscanf(buffer, "BIAS,%f,%f,%f", &gs_bias_roll, &gs_bias_pitch, &gs_bias_yaw);
-        printf("GS ACK BIAS: R:%f, P:%f, Y:%f\n", gs_bias_roll, gs_bias_pitch, gs_bias_yaw);
-        send_pid_update = true;
+        sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
+        printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
     }
+
+    send_tuning_flag = true;
 }
 
 // Non-blocking serial listener
@@ -57,82 +71,121 @@ void check_serial_commands() {
     }
 }
 
+// ============================================================================
+// MAIN GROUND STATION LOOP
+// ============================================================================
+
 int main() {
     stdio_init_all();
-    sleep_ms(2000); // Wait for USB serial connection
-    
-    printf("Ground Station Starting...\n");
 
-    // Initialize SPI for NRF24 using the same pins as the drone
-    spi_init(RADIO_SPI_PORT, 2000 * 1000);
-    gpio_set_function(RADIO_SCK, GPIO_FUNC_SPI);
-    gpio_set_function(RADIO_MOSI, GPIO_FUNC_SPI);
-    gpio_set_function(RADIO_MISO, GPIO_FUNC_SPI);
+    // Give your PC extra time to recognize the USB COM port before printing
+    sleep_ms(3000);
 
-    NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MISO);
+    printf("\n======================================\n");
+    printf("   GROUND STATION BOOTING (RX)        \n");
+    printf("======================================\n");
 
-    if (radio.checkConnection()) {
-        printf("NRF24 Connected Successfully!\n");
-    } else {
-        printf("NRF24 Connection Failed!\n");
+    // 1. Verify SPI Hardware Connection
+    while (!radio.checkConnection()) {
+        printf("ERROR: NRF24 not responding! Check SPI wiring.\n");
+        sleep_ms(2000);
     }
+    printf("NRF24 Hardware Verified Successfully!\n");
 
     radio.init();
 
-    // Ground station addresses (Flipped compared to drone)
-    uint8_t tx_addr[5] = DRONE_RX_ADDR;
-    uint8_t rx_addr[5] = DRONE_TX_ADDR;
-    radio.setAddresses(tx_addr, rx_addr);
+    // 2. Setup Addresses (Mirrored from Drone)
+    const uint8_t drone_addr[5]  = {'D', 'R', 'O', 'N', '1'};
+    const uint8_t ground_addr[5] = {'G', 'R', 'N', 'D', '1'};
+
+    // Ground Station Transmits TO Drone, Receives AS Ground
+    radio.setAddresses(drone_addr, ground_addr);
 
     radio.startListening();
 
+    printf("Ground Station Online. Listening for live Telemetry...\n");
+    printf("Type 'PID,1.5,0.05,0.2' and press Enter to send tuning data.\n\n");
+
+    TelemetryPacket incoming_telemetry;
+    PIDTuningPacket outgoing_pids;
+    uint32_t last_heartbeat = time_us_32();
+    float last_dt_s = 0.0f;
+
+
     while (true) {
-        // 1. Process incoming serial commands from PC
+        // 1. Check for user typing in the Serial Console
         check_serial_commands();
 
-        // 2. If a PID update command was received via Serial, send it to the drone
-        if (send_pid_update) {
-            PIDTuningPacket pid_packet;
-            pid_packet.kp_roll_pitch = (int16_t)(gs_kp_roll_pitch * 1000.0f);
-            pid_packet.ki_roll_pitch = (int16_t)(gs_ki_roll_pitch * 1000.0f);
-            pid_packet.kd_roll_pitch = (int16_t)(gs_kd_roll_pitch * 1000.0f);
-            pid_packet.kp_yaw = (int16_t)(gs_kp_yaw * 1000.0f);
-            pid_packet.ki_yaw = (int16_t)(gs_ki_yaw * 1000.0f);
-            pid_packet.kd_yaw = (int16_t)(gs_kd_yaw * 1000.0f);
-            pid_packet.bias_roll = (int16_t)(gs_bias_roll * 1000.0f);
-            pid_packet.bias_pitch = (int16_t)(gs_bias_pitch * 1000.0f);
-            pid_packet.bias_yaw = (int16_t)(gs_bias_yaw * 1000.0f);
+        // 2. If user updated the PIDs, send them to the drone!
+        if (send_tuning_flag) {
+            radio_restarted = false;
+            // Pack the floats into 16-bit integers (* 1000)
+            int16_t p_roll_pitch = (int16_t)(pid_p_roll_pitch * 1000.0f);
+            int16_t i_roll_pitch = (int16_t)(pid_i_roll_pitch * 1000.0f);
+            int16_t d_roll_pitch = (int16_t)(pid_d_roll_pitch * 1000.0f);
+            int16_t p_yaw = (int16_t)(pid_p_yaw * 1000.0f);
+            int16_t i_yaw = (int16_t)(pid_i_yaw * 1000.0f);
+            int16_t d_yaw = (int16_t)(pid_d_yaw * 1000.0f);
+            int16_t bias_roll_rec = (int16_t)(bias_roll * 1000.0f);
+            int16_t bias_pitch_rec = (int16_t)(bias_pitch * 1000.0f);
+            int16_t bias_yaw_rec = (int16_t)(bias_yaw * 1000.0f);
 
-            if (radio.sendPID(&pid_packet)) {
-                printf("PID Tuning Packet Sent Successfully!\n");
+            // Apply to all axes (or you can separate them in your command string later)
+            outgoing_pids.kp_roll_pitch = p_roll_pitch; outgoing_pids.ki_roll_pitch = i_roll_pitch; outgoing_pids.kd_roll_pitch = d_roll_pitch;
+            outgoing_pids.kp_yaw = p_yaw; outgoing_pids.ki_yaw = i_yaw; outgoing_pids.kd_yaw = d_yaw;
+            outgoing_pids.bias_roll = bias_roll_rec ; outgoing_pids.bias_pitch = bias_pitch_rec; outgoing_pids.bias_yaw = bias_yaw_rec;
+
+            printf("\nBroadcasting new PIDs to Drone...\n");
+
+            if (radio.sendPID(&outgoing_pids)) {
+                printf("--> SUCCESS: Drone received and Acknowledged PIDs!\n\n");
             } else {
-                printf("Failed to send PID Tuning Packet.\n");
+                printf("--> FAILED: Drone offline or out of range. PIDs dropped.\n\n");
             }
-            send_pid_update = false;
+
+            send_tuning_flag = false;
+        }
+        // 3. Check for incoming Telemetry from the drone
+        while (radio.dataAvailable()) {
+            radio_restarted = false;
+
+
+            if (radio.readTelemetry(&incoming_telemetry)) {
+                float current_dt_s = incoming_telemetry.dt_s / 100.0f;
+                float dt = (current_dt_s - last_dt_s);
+
+                // Print the live data to the serial monitor
+                printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: %.2f, RC_Yaw: %.2f, PID_Roll: %.2f, PID_Pitch: %.2f, PID_Yaw: %.2f, current_dt_s: %.2f, dt: %f\n",
+                       incoming_telemetry.roll / 100.0f,
+                       incoming_telemetry.pitch / 100.0f,
+                       incoming_telemetry.yaw / 100.0f,
+                       incoming_telemetry.rc_roll / 100.0f,
+                       incoming_telemetry.rc_pitch / 100.0f,
+                       incoming_telemetry.rc_yaw / 100.0f,
+                       incoming_telemetry.pid_roll / 100.0f,
+                       incoming_telemetry.pid_pitch / 100.0f,
+                       incoming_telemetry.pid_yaw / 100.0f,
+                       current_dt_s,
+                       dt);
+                last_dt_s = current_dt_s;
+                last_heartbeat = time_us_32();
+            } else {
+                // We received a packet, but it failed the checksum/headers
+                printf("[GROUND] WARNING: Corrupted telemetry packet dropped.\n");
+            }
         }
 
-        // 3. Receive telemetry from the drone and print to serial
-        if (radio.dataAvailable()) {
-            TelemetryPacket telemetry_data;
-            if (radio.readTelemetry(&telemetry_data)) {
-                // Decode the data (drone multiplied by 100.0f)
-                float roll = telemetry_data.roll / 100.0f;
-                float pitch = telemetry_data.pitch / 100.0f;
-                float yaw = telemetry_data.yaw / 100.0f;
-                float rc_roll = telemetry_data.rc_roll / 100.0f;
-                float rc_pitch = telemetry_data.rc_pitch / 100.0f;
-                float rc_yaw = telemetry_data.rc_yaw / 100.0f;
-                float pid_roll = telemetry_data.pid_roll / 100.0f;
-                float pid_pitch = telemetry_data.pid_pitch / 100.0f;
-                float pid_yaw = telemetry_data.pid_yaw / 100.0f;
-                float dt = telemetry_data.dt_s / 100.0f; 
-
-                // Print in the same format as debug.py expects
-                printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_R: %.2f, RC_P: %.2f, RC_Y: %.2f, PID_R: %.2f, PID_P: %.2f, PID_Y: %.2f, Time: %.2fs\n",
-                       roll, pitch, yaw, rc_roll, rc_pitch, rc_yaw, pid_roll, pid_pitch, pid_yaw, dt);
+        // 4. Heartbeat (Lets you know the Ground Station hasn't frozen)
+        if (time_us_32() - last_heartbeat > 2000000) {
+            printf("[GROUND] Waiting for Drone telemetry...\n");
+            if (!radio_restarted) {
+                printf("[NRF24] Restarting...\n");
+                radio.restart();
+                printf("[NRF24] Restarted...\n");
+                radio_restarted = true;
             }
+            last_heartbeat = time_us_32();
         }
-        sleep_ms(1);
     }
 
     return 0;
