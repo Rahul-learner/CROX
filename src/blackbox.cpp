@@ -1,6 +1,7 @@
 #include "blackbox.h"
 #include "config.h"
 #include <string.h>
+#include "pico/multicore.h"
 
 Blackbox::Blackbox() {
   packet_buffer = new BlackboxPacket[MAX_BLACKBOX_PACKETS];
@@ -47,6 +48,7 @@ void Blackbox::write_blackbox_to_flash() {
       ((total_bytes + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE) *
       FLASH_SECTOR_SIZE;
 
+  multicore_lockout_start_blocking();
   uint32_t interrupts = save_and_disable_interrupts();
 
   // Erase the required flash sectors
@@ -88,12 +90,13 @@ void Blackbox::write_blackbox_to_flash() {
   }
 
   restore_interrupts(interrupts);
+  multicore_lockout_end_blocking();
   DEBUG_PRINT("Blackbox Saved Successfully! (%d packets)\n", count);
 }
 
 void Blackbox::dump_flash_to_usb() {
-  DEBUG_PRINT("\n--- BEGIN BLACKBOX DUMP ---\n");
-  DEBUG_PRINT("Roll,Pitch,YawRate,PID_R,PID_P,PID_Y,RC_Roll,RC_Pitch,RC_Yaw,RC_"
+  printf("\n--- BEGIN BLACKBOX DUMP ---\n");
+  printf("Roll,Pitch,YawRate,PID_R,PID_P,PID_Y,RC_Roll,RC_Pitch,RC_Yaw,RC_"
          "Throttle,M1,M2,M3,M4,dt_us\n");
 
   // Point directly to the physical flash memory
@@ -110,17 +113,17 @@ void Blackbox::dump_flash_to_usb() {
     // If the dt_us (timestamp) reads as 65535 (0xFFFF), it means
     // we have reached the end of the recorded flight data!
     if (p.dt_us == 0xFFFF) {
-      DEBUG_PRINT("--- REACHED END OF FLIGHT DATA (%d packets) ---\n", i);
+      printf("--- REACHED END OF FLIGHT DATA (%d packets) ---\n", i);
       break;
     }
 
     // write the packet to USB
-    DEBUG_PRINT("%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%u,%u\n", p.roll, p.pitch,
+    printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%u,%u\n", p.roll, p.pitch,
            p.yaw_rate, p.pid_roll, p.pid_pitch, p.pid_yaw, p.rc_roll,
            p.rc_pitch, p.rc_yaw, p.rc_throttle, p.motor1, p.motor2, p.motor3,
            p.motor4, p.dt_us);
 
     byte_index += sizeof(BlackboxPacket);
   }
-  DEBUG_PRINT("--- END BLACKBOX DUMP ---\n");
+  printf("--- END BLACKBOX DUMP ---\n");
 }

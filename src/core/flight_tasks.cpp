@@ -69,7 +69,13 @@ void update_telemetry_and_blackbox(WritePWM &motor, float gz_rate, float dt_ekf,
                                    float dt_pid, uint64_t end_time_us,
                                    bool &blackbox_updated) {
   static uint64_t last_update_print_us = 0;
-  if ((end_time_us - last_update_print_us) > 1000000 / 60) {
+  if ((end_time_us - last_update_print_us) > 1000000 / 200) {
+    // set pid outputs to 0.0 if not armed
+    if (!was_armed){
+      roll_control_output = 0.0f;
+      pitch_control_output = 0.0f;
+      yaw_control_output = 0.0f;
+    }
     shared_roll = roll;
     shared_pitch = pitch;
     shared_yaw = gz_rate;

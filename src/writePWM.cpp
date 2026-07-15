@@ -48,6 +48,12 @@ WritePWM::WritePWM() {
     set_esc_pulse_us(MOTOR2_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR3_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR4_PWM_PIN, ESC_MIN_PULSE_US);
+
+    // set all motor_speed to 1000
+    motor1_speed = ESC_MIN_PULSE_US;
+    motor2_speed = ESC_MIN_PULSE_US;
+    motor3_speed = ESC_MIN_PULSE_US;
+    motor4_speed = ESC_MIN_PULSE_US;
 }
 
 void WritePWM::update_motors_pwm(uint throttle, float roll_control_output, float pitch_control_output, float yaw_control_output) {
@@ -79,4 +85,34 @@ void WritePWM::reset() {
     set_esc_pulse_us(MOTOR2_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR3_PWM_PIN, ESC_MIN_PULSE_US);
     set_esc_pulse_us(MOTOR4_PWM_PIN, ESC_MIN_PULSE_US);
+
+    // set all motor_speed to 1000
+    motor1_speed = ESC_MIN_PULSE_US;
+    motor2_speed = ESC_MIN_PULSE_US;
+    motor3_speed = ESC_MIN_PULSE_US;
+    motor4_speed = ESC_MIN_PULSE_US;
+}
+
+void WritePWM::calibrate_escs(bool calibrate) {
+    if (!calibrate) return;
+
+    DEBUG_PRINT("Starting ESC Calibration...\n");
+    DEBUG_PRINT("Setting MAX throttle (2000us) to all motors...\n");
+    set_esc_pulse_us(MOTOR1_PWM_PIN, ESC_MAX_PULSE_US);
+    set_esc_pulse_us(MOTOR2_PWM_PIN, ESC_MAX_PULSE_US);
+    set_esc_pulse_us(MOTOR3_PWM_PIN, ESC_MAX_PULSE_US);
+    set_esc_pulse_us(MOTOR4_PWM_PIN, ESC_MAX_PULSE_US);
+    
+    DEBUG_PRINT("Wait for ESCs to register MAX throttle. Plug in battery now if unplugged!\n");
+    sleep_ms(5000);
+    
+    DEBUG_PRINT("Setting MIN throttle (1000us) to all motors...\n");
+    set_esc_pulse_us(MOTOR1_PWM_PIN, ESC_MIN_PULSE_US);
+    set_esc_pulse_us(MOTOR2_PWM_PIN, ESC_MIN_PULSE_US);
+    set_esc_pulse_us(MOTOR3_PWM_PIN, ESC_MIN_PULSE_US);
+    set_esc_pulse_us(MOTOR4_PWM_PIN, ESC_MIN_PULSE_US);
+    
+    DEBUG_PRINT("Wait for ESC confirmation beeps...\n");
+    sleep_ms(3000);
+    DEBUG_PRINT("ESC Calibration Complete!\n");
 }

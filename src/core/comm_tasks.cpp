@@ -3,6 +3,7 @@
 #include "core/globals.h"
 #include "pico/time.h"
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -59,6 +60,7 @@ void check_serial_commands() {
 }
 
 void core1_entry() {
+    multicore_lockout_victim_init();
     uint32_t last_telemetry_time = time_us_32();
     TelemetryPacket my_telemetry;
     PIDTuningPacket new_pids;

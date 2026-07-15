@@ -496,7 +496,7 @@ class BlackboxViewer(QMainWindow):
         
         # Calculate local thrust vector, rotate to global, and add global gravity vector
         thrust_vector_global = R @ np.array([0, 0, thrust_mag])
-        gravity_vector_global = np.array([0, 0, -1.0])
+        gravity_vector_global = np.array([0, 0, 0.0])
         
         net_vector = thrust_vector_global + gravity_vector_global
         

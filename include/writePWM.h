@@ -27,6 +27,7 @@ public:
 
     WritePWM();
     void update_motors_pwm(uint throttle, float roll_control_output, float pitch_control_output, float yaw_control_output);
+    void calibrate_escs(bool calibrate);
 
     void reset();
 };
