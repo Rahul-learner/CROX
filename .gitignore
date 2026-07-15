@@ -1,5 +1,6 @@
 build_drone/
 build_gs/
+build_gs_monitor/
 pico_sdk_import.cmake
 compile_commands.json
 .venv/
