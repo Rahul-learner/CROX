@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "drone",
+      "displayName": "Drone (RP2350)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build_drone",
+      "cacheVariables": {
+        "PICO_PLATFORM": "rp2350",
+        "PICOTOOL_FORCE_FETCH_FROM_GIT": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "drone",
+      "configurePreset": "drone"
+    }
+  ]
+}

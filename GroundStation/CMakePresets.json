@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "groundstation",
+      "displayName": "Ground Station (RP2040)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build_gs",
+      "cacheVariables": {
+        "PICO_PLATFORM": "rp2040",
+        "PICOTOOL_FORCE_FETCH_FROM_GIT": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "groundstation",
+      "configurePreset": "groundstation"
+    }
+  ]
+}
