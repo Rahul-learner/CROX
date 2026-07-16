@@ -199,15 +199,39 @@ int main() {
                 imu_data_ready = false;
                 loop_counter++;
 
-                uint64_t start = time_us_64();
+                uint64_t start_ekf = time_us_64();
                 float gz_rate = 0.0f;
                 
                 update_sensors_and_ekf(filter, gyro_bias_x, gyro_bias_y, gyro_bias_z, dt_ekf, run_accel_update, gz_rate);
-                update_pid_and_motors(motor, gz_rate, dt_pid);
                 
-                uint64_t end = time_us_64();
+                uint64_t end_ekf = time_us_64();
+                uint64_t ekf_calc_time = end_ekf - start_ekf;
+
+                uint64_t current_time_pid_us = time_us_64();
+                uint64_t pid_calc_time = 0;
+                if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
+                    dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
+                    last_update_pid_us = current_time_pid_us;
+                    
+                    uint64_t start_pid = time_us_64();
+                    update_pid_and_motors(motor, gz_rate, dt_pid);
+                    uint64_t end_pid = time_us_64();
+                    pid_calc_time = end_pid - start_pid;
+                }
                 
-                update_telemetry_and_blackbox(motor, gz_rate, dt_ekf, dt_pid, end, blackbox_updated);
+                uint64_t current_time_telemetry_us = time_us_64();
+                if ((current_time_telemetry_us - last_update_telemetry_us) > 1000000 / 60) {
+                    update_telemetry_and_blackbox(motor, gz_rate, dt_ekf, dt_pid, current_time_telemetry_us, blackbox_updated);
+                    last_update_telemetry_us = current_time_telemetry_us;
+                    
+                    DEBUG_PRINT("EKF calc us: %llu, PID calc us: %llu\n", ekf_calc_time, pid_calc_time);
+                    DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: "
+                                "%.2f, RC_Yaw: %.2f, PID_Roll: %.2f, PID_Pitch: %.2f, PID_Yaw: %.2f, "
+                                "dt_pid: %f, dt_ekf: %f\n",
+                                roll, pitch, gz_rate, receiver_pwm[0], receiver_pwm[1],
+                                receiver_pwm[3], roll_control_output, pitch_control_output,
+                                yaw_control_output, dt_pid, dt_ekf);
+                }
             }
 
         } else {
