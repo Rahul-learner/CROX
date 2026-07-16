@@ -20,22 +20,27 @@ void process_command(char* buffer) {
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
         DEBUG_PRINT("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
+        tuning_updates[3] = true;
     }
     // NEW: Roll & Pitch PID
     else if (strncmp(buffer, "PID_RP,", 7) == 0) {
         sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
         DEBUG_PRINT("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
         pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        tuning_updates[0] = true;
     }
     // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
         DEBUG_PRINT("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
         yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
+        tuning_updates[1] = true;
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
         DEBUG_PRINT("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
+        tuning_updates[2] = true;
     }
 }
 
@@ -79,19 +84,46 @@ void core1_entry() {
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
                 DEBUG_PRINT("NEW PID GAINS and BIAS ANGLES RECEIVED!\n");
-                float kp_roll_pitch = new_pids.kp_roll_pitch / 1000.0f;
-                float ki_roll_pitch = new_pids.ki_roll_pitch / 1000.0f;
-                float kd_roll_pitch = new_pids.kd_roll_pitch / 1000.0f;
-                float kp_yaw = new_pids.kp_yaw / 1000.0f;
-                float ki_yaw = new_pids.ki_yaw / 1000.0f;
-                float kd_yaw = new_pids.kd_yaw / 1000.0f;
-                bias_roll = new_pids.bias_roll / 1000.0f;
-                bias_pitch = new_pids.bias_pitch / 1000.0f;
-                bias_yaw = new_pids.bias_yaw / 1000.0f;
+                bool rp_changed = false, yaw_changed = false, bias_changed = false;
+
+                float new_kp_rp = new_pids.kp_roll_pitch / 1000.0f;
+                float new_ki_rp = new_pids.ki_roll_pitch / 1000.0f;
+                float new_kd_rp = new_pids.kd_roll_pitch / 1000.0f;
+                if (pid_p_roll_pitch != new_kp_rp || pid_i_roll_pitch != new_ki_rp || pid_d_roll_pitch != new_kd_rp) {
+                    pid_p_roll_pitch = new_kp_rp;
+                    pid_i_roll_pitch = new_ki_rp;
+                    pid_d_roll_pitch = new_kd_rp;
+                    rp_changed = true;
+                }
+
+                float new_kp_y = new_pids.kp_yaw / 1000.0f;
+                float new_ki_y = new_pids.ki_yaw / 1000.0f;
+                float new_kd_y = new_pids.kd_yaw / 1000.0f;
+                if (pid_p_yaw != new_kp_y || pid_i_yaw != new_ki_y || pid_d_yaw != new_kd_y) {
+                    pid_p_yaw = new_kp_y;
+                    pid_i_yaw = new_ki_y;
+                    pid_d_yaw = new_kd_y;
+                    yaw_changed = true;
+                }
+
+                float new_b_r = new_pids.bias_roll / 1000.0f;
+                float new_b_p = new_pids.bias_pitch / 1000.0f;
+                float new_b_y = new_pids.bias_yaw / 1000.0f;
+                if (bias_roll != new_b_r || bias_pitch != new_b_p || bias_yaw != new_b_y) {
+                    bias_roll = new_b_r;
+                    bias_pitch = new_b_p;
+                    bias_yaw = new_b_y;
+                    bias_changed = true;
+                }
+
+                if (rp_changed) tuning_updates[0] = true;
+                if (yaw_changed) tuning_updates[1] = true;
+                if (bias_changed) tuning_updates[2] = true;
+
                 DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
-                roll_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
-                pitch_pid.set_pid(kp_roll_pitch, ki_roll_pitch, kd_roll_pitch);
-                yaw_pid.set_pid(kp_yaw, ki_yaw, kd_yaw);
+                roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
                 fc_buzzer.play_tone(1);
                 sleep_ms(200);
                 fc_buzzer.stop();

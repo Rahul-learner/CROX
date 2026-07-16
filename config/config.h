@@ -79,13 +79,13 @@
 // =============================================================================
 // PID DEFAULTS (Roll & Pitch)
 // =============================================================================
-#define DEFAULT_PID_P_ROLL_PITCH 1.75f
-#define DEFAULT_PID_I_ROLL_PITCH 0.05f
+#define DEFAULT_PID_P_ROLL_PITCH 1.95f
+#define DEFAULT_PID_I_ROLL_PITCH 0.15f
 #define DEFAULT_PID_D_ROLL_PITCH 0.47f
 
 // PID DEFAULTS (Yaw)
-#define DEFAULT_PID_P_YAW 1.3f
-#define DEFAULT_PID_I_YAW 0.0f
+#define DEFAULT_PID_P_YAW 2.1f
+#define DEFAULT_PID_I_YAW 0.1f
 #define DEFAULT_PID_D_YAW 0.0f
 
 // PID Constraints

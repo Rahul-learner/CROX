@@ -24,6 +24,8 @@ extern float pid_d_yaw;
 
 extern BlackboxPacket bb_packet;
 
+extern volatile bool tuning_updates[4]; // 0: PID_RP, 1: PID_YAW, 2: BIAS, 3: EKF
+
 extern volatile bool send_telemetry;
 extern volatile float shared_roll;
 extern volatile float shared_pitch;

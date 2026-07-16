@@ -18,6 +18,7 @@ ser_port = None
 HISTORY_SIZE = 200
 history = {}
 lines_2d = {}
+initialized = False
 
 # Regex pattern to match Key: Value pairs (e.g. "Roll: 12.34" or "PID_RP: -0.05")
 pattern = re.compile(r"([a-zA-Z0-9_]+):\s*([-0-9.]+)")
@@ -172,86 +173,97 @@ def toggle_line(label):
 # ANIMATION LOOP
 # ==============================================================================
 def update(frame):
-    global check_buttons
+    global check_buttons, initialized
     
-    # Drain the queue to get the latest data
-    latest_data = None
+    # Drain the queue to get all pending data
+    items = []
     while not data_queue.empty():
         try:
-            latest_data = data_queue.get_nowait()
+            items.append(data_queue.get_nowait())
         except queue.Empty:
             break
             
-    if latest_data is not None:
+    if not items:
+        return line_arm1, line_arm2, line_front, *lines_2d.values()
         
-        # 1. Initialize variables dynamically on first receive
-        if not history:
-            labels = list(latest_data.keys())
-            for k in labels:
-                history[k] = []
-                # Create a plot line for every variable
-                line, = ax_2d.plot([], [], label=k)
-                lines_2d[k] = line
-            
-            # Setup CheckButtons
-            # By default, only show Roll, Pitch, Yaw
-            visibility = [True if k in ['Roll', 'Pitch', 'Yaw'] else False for k in labels]
-            for k, vis in zip(labels, visibility):
-                lines_2d[k].set_visible(vis)
+    # 1. Initialize variables dynamically ONLY when a true telemetry packet arrives
+    if not initialized:
+        for d in items:
+            if 'Roll' in d and 'Pitch' in d and 'Yaw' in d:
+                labels = list(d.keys())
+                for k in labels:
+                    history[k] = []
+                    # Create a plot line for every variable
+                    line, = ax_2d.plot([], [], label=k)
+                    line.set_visible(k in ['Roll', 'Pitch', 'Yaw'])
+                    lines_2d[k] = line
                 
-            check_buttons = CheckButtons(ax_checks, labels, visibility)
-            check_buttons.on_clicked(toggle_line)
-            
-            # Place legend outside
-            ax_2d.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
+                # Setup CheckButtons once
+                visibility = [lines_2d[k].get_visible() for k in labels]
+                check_buttons = CheckButtons(ax_checks, labels, visibility)
+                check_buttons.on_clicked(toggle_line)
+                
+                # Place legend outside
+                ax_2d.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
+                initialized = True
+                break
+                
+    # 2. Append new data
+    if initialized:
+        appended = False
+        latest_valid = None
         
-        # 2. Append new data
-        for k, v in latest_data.items():
-            if k in history:
-                history[k].append(v)
+        for d in items:
+            # Ignore partial packets like ACK strings to prevent dropping lines to 0
+            if 'Roll' in d and 'Pitch' in d and 'Yaw' in d:
+                appended = True
+                latest_valid = d
+                for k in history.keys():
+                    history[k].append(d.get(k, 0.0))
+                    
+        if appended:
+            for k in history.keys():
                 if len(history[k]) > HISTORY_SIZE:
-                    history[k].pop(0)
+                    history[k] = history[k][-HISTORY_SIZE:]
             
-        # 3. Update 2D lines
-        x_data = range(len(history[list(history.keys())[0]]))
-        
-        min_val = float('inf')
-        max_val = float('-inf')
-        any_visible = False
-        
-        for k, line in lines_2d.items():
-            line.set_data(x_data, history[k])
+            # 3. Update 2D lines
+            x_data = range(len(history[list(history.keys())[0]]))
             
-            # Only scale Y-axis for visible lines
-            if line.get_visible() and history[k]:
-                any_visible = True
-                min_val = min(min_val, min(history[k]))
-                max_val = max(max_val, max(history[k]))
+            min_val = float('inf')
+            max_val = float('-inf')
+            any_visible = False
+            
+            for k, line in lines_2d.items():
+                line.set_data(x_data, history[k])
                 
-        # Adjust Y limits dynamically based on active lines
-        if any_visible and min_val != float('inf'):
-            margin = max(20.0, (max_val - min_val) * 0.1)
-            ax_2d.set_ylim(min_val - margin, max_val + margin)
+                if line.get_visible() and history[k]:
+                    any_visible = True
+                    min_val = min(min_val, min(history[k]))
+                    max_val = max(max_val, max(history[k]))
+                    
+            if any_visible and min_val != float('inf'):
+                margin = max(20.0, (max_val - min_val) * 0.1)
+                ax_2d.set_ylim(min_val - margin, max_val + margin)
+                
+            # 4. Update 3D Visualizer
+            r = latest_valid.get('Roll', 0.0)
+            p = latest_valid.get('Pitch', 0.0)
+            y = latest_valid.get('Yaw', 0.0)
             
-        # 4. Update 3D Visualizer
-        r = latest_data.get('Roll', 0.0)
-        p = latest_data.get('Pitch', 0.0)
-        y = latest_data.get('Yaw', 0.0)
-        
-        R = get_rotation_matrix(r, p, y)
-        rot_arm1 = R @ base_arm1
-        rot_arm2 = R @ base_arm2
-        rot_front = R @ base_front
-        
-        line_arm1.set_data(rot_arm1[0], rot_arm1[1])
-        line_arm1.set_3d_properties(rot_arm1[2])
-        
-        line_arm2.set_data(rot_arm2[0], rot_arm2[1])
-        line_arm2.set_3d_properties(rot_arm2[2])
-        
-        line_front.set_data(rot_front[0], rot_front[1])
-        line_front.set_3d_properties(rot_front[2])
-        
+            R = get_rotation_matrix(r, p, y)
+            rot_arm1 = R @ base_arm1
+            rot_arm2 = R @ base_arm2
+            rot_front = R @ base_front
+            
+            line_arm1.set_data(rot_arm1[0], rot_arm1[1])
+            line_arm1.set_3d_properties(rot_arm1[2])
+            
+            line_arm2.set_data(rot_arm2[0], rot_arm2[1])
+            line_arm2.set_3d_properties(rot_arm2[2])
+            
+            line_front.set_data(rot_front[0], rot_front[1])
+            line_front.set_3d_properties(rot_front[2])
+            
     return line_arm1, line_arm2, line_front, *lines_2d.values()
 
 def main():

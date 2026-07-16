@@ -56,6 +56,7 @@ float pid_d_yaw = DEFAULT_PID_D_YAW;
 BlackboxPacket bb_packet;
 
 // --- Shared Variables for Dual-Core Communication ---
+volatile bool tuning_updates[4] = {false, false, false, false};
 volatile bool send_telemetry = false;
 volatile float shared_roll = 0.0f;
 volatile float shared_pitch = 0.0f;

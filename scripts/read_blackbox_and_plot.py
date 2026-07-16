@@ -41,7 +41,9 @@ class SerialReaderThread(QThread):
             
             in_dump = False
             headers = []
-            data = []
+            flights = []
+            current_flight = []
+            current_tuning = []
 
             while self.running:
                 if ser.in_waiting:
@@ -55,10 +57,35 @@ class SerialReaderThread(QThread):
                     
                     if in_dump:
                         if "--- END BLACKBOX DUMP ---" in line or "REACHED END OF FLIGHT DATA" in line:
-                            self.status_update.emit(f"Finished reading. {len(data)} packets received.")
-                            self.data_ready.emit(headers, data)
+                            if current_flight:
+                                flights.append({'data': current_flight, 'tuning': current_tuning})
+                            total_packets = sum(len(f['data']) for f in flights)
+                            self.status_update.emit(f"Finished reading. {len(flights)} flights, {total_packets} packets.")
+                            self.data_ready.emit(headers, flights)
                             break
                         
+                        if "--- FLIGHT SEPARATOR ---" in line:
+                            if current_flight:
+                                flights.append({'data': current_flight, 'tuning': current_tuning})
+                                current_flight = []
+                                current_tuning = []
+                            continue
+
+                        if "--- TUNING_UPDATE:" in line:
+                            try:
+                                parts = line.strip("- ").split(":")[1].strip().split(",")
+                                if len(parts) == 4:
+                                    current_tuning.append({
+                                        'index': len(current_flight),
+                                        'type': parts[0],
+                                        'v1': float(parts[1]),
+                                        'v2': float(parts[2]),
+                                        'v3': float(parts[3])
+                                    })
+                            except:
+                                pass
+                            continue
+
                         if not headers:
                             headers = line.split(',')
                             continue
@@ -66,9 +93,10 @@ class SerialReaderThread(QThread):
                         try:
                             row = [float(x) for x in line.split(',')]
                             if len(row) == len(headers):
-                                data.append(row)
-                                if len(data) % 100 == 0:
-                                    self.progress_update.emit(len(data))
+                                current_flight.append(row)
+                                total_read = sum(len(f['data']) for f in flights) + len(current_flight)
+                                if total_read % 100 == 0:
+                                    self.progress_update.emit(total_read)
                         except ValueError:
                             pass
             ser.close()
@@ -87,6 +115,7 @@ class BlackboxViewer(QMainWindow):
         self.setWindowTitle("DroneFC Blackbox Data Viewer")
         
         self.headers = []
+        self.all_flights_data = []
         self.data_matrix = None
         self.lines = {} 
         self.calculated_time = None
@@ -176,9 +205,21 @@ class BlackboxViewer(QMainWindow):
         self.connect_btn.setStyleSheet("background-color: #0078D7; color: white; font-weight: bold; padding: 5px;")
         control_layout.addWidget(self.connect_btn)
 
+        self.flight_combo = QComboBox()
+        self.flight_combo.setMinimumWidth(100)
+        self.flight_combo.setEnabled(False)
+        self.flight_combo.currentIndexChanged.connect(self.select_flight)
+        control_layout.addWidget(QLabel(" Flight:"))
+        control_layout.addWidget(self.flight_combo)
+
         self.status_lbl = QLabel("Ready")
         control_layout.addWidget(self.status_lbl)
         control_layout.addStretch()
+
+        self.tuning_label = QLabel("<b>Active Tuning:</b> Default")
+        self.tuning_label.setStyleSheet("background-color: #333; color: white; padding: 5px; border-radius: 3px; font-family: monospace; font-size: 10px;")
+        control_layout.addWidget(self.tuning_label)
+
         main_layout.addLayout(control_layout)
 
         # --- Middle Section: Checkboxes + 3D View ---
@@ -320,13 +361,38 @@ class BlackboxViewer(QMainWindow):
     def reading_finished(self):
         self.connect_btn.setEnabled(True)
 
-    def process_data(self, headers, data):
-        if not data:
+    def process_data(self, headers, flights):
+        if not flights or all(len(f['data']) == 0 for f in flights):
             QMessageBox.warning(self, "No Data", "No blackbox data was read.")
             return
             
         self.headers = headers
-        self.data_matrix = np.array(data)
+        self.all_flights_data = flights
+        
+        self.flight_combo.blockSignals(True)
+        self.flight_combo.clear()
+        for i, f in enumerate(flights):
+            self.flight_combo.addItem(f"Flight {i+1} ({len(f['data'])} pkts)")
+        self.flight_combo.setEnabled(True)
+        self.flight_combo.blockSignals(False)
+        
+        if self.flight_combo.currentIndex() != 0:
+            self.flight_combo.setCurrentIndex(0)
+        else:
+            self.select_flight(0)
+
+    def select_flight(self, idx):
+        if idx < 0 or idx >= len(self.all_flights_data):
+            return
+            
+        flight_info = self.all_flights_data[idx]
+        flight_data = flight_info['data']
+        self.current_tuning_events = flight_info.get('tuning', [])
+        
+        if not flight_data:
+            return
+            
+        self.data_matrix = np.array(flight_data)
         
         if 'dt_us' in self.headers:
             dt_idx = self.headers.index('dt_us')
@@ -336,7 +402,6 @@ class BlackboxViewer(QMainWindow):
                     raw_time[i:] += 65535
             self.calculated_time = (raw_time - raw_time[0]) / 100.0
             
-            # The user wants dt_us column to represent actual seconds in the UI
             self.data_matrix[:, dt_idx] = self.calculated_time
         else:
             self.calculated_time = np.arange(len(self.data_matrix)) * 0.02
@@ -373,6 +438,7 @@ class BlackboxViewer(QMainWindow):
         self.play_btn.setChecked(True)
 
     def build_checkboxes(self):
+        checked_states = {h: cb.isChecked() for h, cb in self.checkboxes.items()}
         for i in reversed(range(self.checkbox_layout.count())): 
             widget = self.checkbox_layout.itemAt(i).widget()
             if widget is not None:
@@ -396,8 +462,12 @@ class BlackboxViewer(QMainWindow):
             
             cb = QCheckBox(f"{header}: {0.0:8.2f}")
             cb.setFont(mono_font)
-            if header in ['Roll', 'Pitch']: cb.setChecked(True)
-            else: cb.setChecked(False)
+            if header in checked_states:
+                cb.setChecked(checked_states[header])
+            elif header in ['Roll', 'Pitch']: 
+                cb.setChecked(True)
+            else: 
+                cb.setChecked(False)
             cb.stateChanged.connect(self.update_plot_visibility)
             self.checkboxes[header] = cb
             
@@ -577,28 +647,55 @@ class BlackboxViewer(QMainWindow):
             self.ax_2d.set_xlim(max(0, t - window/2), t + window/2)
         self.canvas_2d.draw_idle()
 
-    def slider_changed(self, idx):
-        if self.data_matrix is None or idx >= len(self.data_matrix):
+    def slider_changed(self, value):
+        if self.data_matrix is None or value >= len(self.data_matrix):
             return
             
-        t = self.calculated_time[idx]
-        self.time_lbl.setText(f"Time: {t:.2f}s")
+        self.time_lbl.setText(f"Time: {self.calculated_time[value]:.2f} s")
+        
+        # Find active tuning for this time index
+        if hasattr(self, 'current_tuning_events'):
+            active_tuning = {}
+            for ev in self.current_tuning_events:
+                if ev['index'] <= value:
+                    active_tuning[ev['type']] = ev
+            
+            text = "<b>Active Tuning:</b> "
+            if not active_tuning:
+                text += "Default"
+            else:
+                parts = []
+                if 'PID_RP' in active_tuning:
+                    ev = active_tuning['PID_RP']
+                    parts.append(f"RP({ev['v1']:.2f}, {ev['v2']:.2f}, {ev['v3']:.2f})")
+                if 'PID_YAW' in active_tuning:
+                    ev = active_tuning['PID_YAW']
+                    parts.append(f"YAW({ev['v1']:.2f}, {ev['v2']:.2f}, {ev['v3']:.2f})")
+                if 'BIAS' in active_tuning:
+                    ev = active_tuning['BIAS']
+                    parts.append(f"BIAS({ev['v1']:.2f}, {ev['v2']:.2f}, {ev['v3']:.2f})")
+                if 'EKF' in active_tuning:
+                    ev = active_tuning['EKF']
+                    parts.append(f"EKF({ev['v1']:.5f}, {ev['v2']:.5f}, {ev['v3']:.2f})")
+                text += " | ".join(parts)
+            self.tuning_label.setText(text)
+        
         self.update_x_axis()
         
         # Update checkbox texts with current values
         for header, cb in self.checkboxes.items():
             if header in self.headers:
-                val = self.data_matrix[idx, self.headers.index(header)]
+                val = self.data_matrix[value, self.headers.index(header)]
                 cb.setText(f"{header}: {val:8.2f}")
         
-        r_val = self.data_matrix[idx, self.headers.index('Roll')] if 'Roll' in self.headers else 0.0
-        p_val = self.data_matrix[idx, self.headers.index('Pitch')] if 'Pitch' in self.headers else 0.0
-        y_val = self.calculated_yaw[idx]
+        r_val = self.data_matrix[value, self.headers.index('Roll')] if 'Roll' in self.headers else 0.0
+        p_val = self.data_matrix[value, self.headers.index('Pitch')] if 'Pitch' in self.headers else 0.0
+        y_val = self.calculated_yaw[value]
         
-        m1 = self.data_matrix[idx, self.headers.index('M1')] if 'M1' in self.headers else 1000
-        m2 = self.data_matrix[idx, self.headers.index('M2')] if 'M2' in self.headers else 1000
-        m3 = self.data_matrix[idx, self.headers.index('M3')] if 'M3' in self.headers else 1000
-        m4 = self.data_matrix[idx, self.headers.index('M4')] if 'M4' in self.headers else 1000
+        m1 = self.data_matrix[value, self.headers.index('M1')] if 'M1' in self.headers else 1000
+        m2 = self.data_matrix[value, self.headers.index('M2')] if 'M2' in self.headers else 1000
+        m3 = self.data_matrix[value, self.headers.index('M3')] if 'M3' in self.headers else 1000
+        m4 = self.data_matrix[value, self.headers.index('M4')] if 'M4' in self.headers else 1000
 
         self.update_3d_drone(r_val, p_val, y_val, m1, m2, m3, m4)
 

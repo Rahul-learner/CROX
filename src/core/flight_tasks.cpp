@@ -69,7 +69,48 @@ void update_telemetry_and_blackbox(WritePWM &motor, float gz_rate, float dt_ekf,
                                    float dt_pid, uint64_t end_time_us,
                                    bool &blackbox_updated) {
   static uint64_t last_update_print_us = 0;
-  if ((end_time_us - last_update_print_us) > 1000000 / 200) {
+  if ((end_time_us - last_update_print_us) > 1000000 / 60) {
+    if (tuning_updates[0]) {
+        BlackboxPacket p;
+        memset(&p, 0, sizeof(p));
+        p.dt_us = 0xFFFD;
+        p.pid_roll = (int16_t)(pid_p_roll_pitch * 1000.0f);
+        p.pid_pitch = (int16_t)(pid_i_roll_pitch * 1000.0f);
+        p.pid_yaw = (int16_t)(pid_d_roll_pitch * 1000.0f);
+        blackbox.write_packet(p);
+        tuning_updates[0] = false;
+    }
+    if (tuning_updates[1]) {
+        BlackboxPacket p;
+        memset(&p, 0, sizeof(p));
+        p.dt_us = 0xFFFC;
+        p.pid_roll = (int16_t)(pid_p_yaw * 1000.0f);
+        p.pid_pitch = (int16_t)(pid_i_yaw * 1000.0f);
+        p.pid_yaw = (int16_t)(pid_d_yaw * 1000.0f);
+        blackbox.write_packet(p);
+        tuning_updates[1] = false;
+    }
+    if (tuning_updates[2]) {
+        BlackboxPacket p;
+        memset(&p, 0, sizeof(p));
+        p.dt_us = 0xFFFB;
+        p.pid_roll = (int16_t)(bias_roll * 1000.0f);
+        p.pid_pitch = (int16_t)(bias_pitch * 1000.0f);
+        p.pid_yaw = (int16_t)(bias_yaw * 1000.0f);
+        blackbox.write_packet(p);
+        tuning_updates[2] = false;
+    }
+    if (tuning_updates[3]) {
+        BlackboxPacket p;
+        memset(&p, 0, sizeof(p));
+        p.dt_us = 0xFFFA;
+        p.pid_roll = (int16_t)(q_gyro * 100000.0f); // storing in unused fields, higher precision for EKF if needed. q_gyro might be small? 
+        p.pid_pitch = (int16_t)(q_bias * 100000.0f);
+        p.pid_yaw = (int16_t)(r_accel * 1000.0f);
+        blackbox.write_packet(p);
+        tuning_updates[3] = false;
+    }
+
     // set pid outputs to 0.0 if not armed
     if (!was_armed){
       roll_control_output = 0.0f;

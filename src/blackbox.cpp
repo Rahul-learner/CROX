@@ -6,6 +6,34 @@
 Blackbox::Blackbox() {
   packet_buffer = new BlackboxPacket[MAX_BLACKBOX_PACKETS];
   clear_blackbox_data();
+
+  // Load previous flight data from flash
+  const uint8_t *flash_data = (const uint8_t *)(XIP_BASE + FLASH_TARGET_OFFSET);
+  size_t byte_index = 0;
+
+  for (size_t i = 0; i < MAX_BLACKBOX_PACKETS; i++) {
+    BlackboxPacket p;
+    memcpy(&p, &flash_data[byte_index], sizeof(BlackboxPacket));
+
+    if (p.dt_us == 0xFFFF) {
+      break;
+    }
+
+    packet_buffer[i] = p;
+    head = (i + 1) % MAX_BLACKBOX_PACKETS;
+    count++;
+    byte_index += sizeof(BlackboxPacket);
+  }
+
+  // Add separator if we loaded previous flight data
+  if (count > 0 && count < MAX_BLACKBOX_PACKETS) {
+    BlackboxPacket sep;
+    memset(&sep, 0, sizeof(BlackboxPacket));
+    sep.dt_us = 0xFFFE;
+    packet_buffer[head] = sep;
+    head = (head + 1) % MAX_BLACKBOX_PACKETS;
+    count++;
+  }
 }
 
 void Blackbox::clear_blackbox_data() {
@@ -115,6 +143,21 @@ void Blackbox::dump_flash_to_usb() {
     if (p.dt_us == 0xFFFF) {
       printf("--- REACHED END OF FLIGHT DATA (%d packets) ---\n", i);
       break;
+    } else if (p.dt_us == 0xFFFE) {
+      printf("--- FLIGHT SEPARATOR ---\n");
+      continue;
+    } else if (p.dt_us == 0xFFFD) {
+      printf("--- TUNING_UPDATE: PID_RP,%.3f,%.3f,%.3f ---\n", p.pid_roll / 1000.0f, p.pid_pitch / 1000.0f, p.pid_yaw / 1000.0f);
+      continue;
+    } else if (p.dt_us == 0xFFFC) {
+      printf("--- TUNING_UPDATE: PID_YAW,%.3f,%.3f,%.3f ---\n", p.pid_roll / 1000.0f, p.pid_pitch / 1000.0f, p.pid_yaw / 1000.0f);
+      continue;
+    } else if (p.dt_us == 0xFFFB) {
+      printf("--- TUNING_UPDATE: BIAS,%.3f,%.3f,%.3f ---\n", p.pid_roll / 1000.0f, p.pid_pitch / 1000.0f, p.pid_yaw / 1000.0f);
+      continue;
+    } else if (p.dt_us == 0xFFFA) {
+      printf("--- TUNING_UPDATE: EKF,%.5f,%.5f,%.3f ---\n", p.pid_roll / 100000.0f, p.pid_pitch / 100000.0f, p.pid_yaw / 1000.0f);
+      continue;
     }
 
     // write the packet to USB
