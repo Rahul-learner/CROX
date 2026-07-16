@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 # initialize the SDK based on PICO_SDK_PATH
 include(../pico_sdk_import.cmake)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 project(GroundStation C CXX ASM)
 
 pico_sdk_init()

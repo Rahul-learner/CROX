@@ -1,0 +1,9 @@
+If:
+  PathMatch: GroundStation/.*
+CompileFlags:
+  CompilationDatabase: GroundStation/build_gs/
+---
+If:
+  PathExclude: GroundStation/.*
+CompileFlags:
+  CompilationDatabase: build_drone/

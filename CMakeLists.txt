@@ -17,6 +17,8 @@ pico_sdk_init()
 
 add_executable(CROX
     main.cpp
+    config/config.h
+    config/config.cpp
     src/core/hardware_setup.cpp
     src/core/flight_tasks.cpp
     src/core/comm_tasks.cpp
