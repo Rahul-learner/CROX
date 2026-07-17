@@ -27,8 +27,8 @@ public:
 
     ReadPWM();
 
-    // Read the PWM receiver signal from FIFO
-    void read_pwm(float (&channel)[4]);
+    // Read the PWM receiver signal from FIFO (both mapped and raw microseconds)
+    void read_pwm(float (&channel)[4], float (&raw_channel)[4]);
 
     // Read the PWM throttle
     void read_throttle(float& throttle);
