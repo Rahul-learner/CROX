@@ -184,13 +184,14 @@ int main() {
             uint64_t end_ekf = time_us_64();
             uint64_t ekf_calc_time = end_ekf - start_ekf;
 
-            bool throttle_active = receiver_pwm[2] > 1050.0f;
+            bool throttle_active = receiver_pwm[2] > 1005.0f;
 
             if (throttle_active) {
                 if (!is_armed) {
                     bool is_level = (roll < 25.0f && roll > -25.0f) && (pitch < 25.0f && pitch > -25.0f);
+                    bool is_throttle_safe = receiver_pwm[2] < 1050.0f && receiver_pwm[2] > 1000.0f;
                     
-                    if (is_level) {
+                    if (is_level && is_throttle_safe) {
                         is_armed = true;
                         fc_buzzer.stop();
                         fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
