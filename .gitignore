@@ -5,3 +5,4 @@ pico_sdk_import.cmake
 compile_commands.json
 .venv/
 logs/
+tuning.cfg

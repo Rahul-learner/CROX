@@ -17,6 +17,11 @@
 
 // Parse the received usb string
 void process_command(char* buffer) {
+    DEBUG_PRINT("Processing Command: %s\n", buffer);
+    fc_buzzer.play_tone(2);
+    sleep_ms(200);
+    fc_buzzer.stop();
+    
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
         DEBUG_PRINT("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
@@ -81,6 +86,9 @@ void core1_entry() {
         while (radio.dataAvailable()) {
             radio_restarted = false;
             DEBUG_PRINT("New Data Available!..");
+            fc_buzzer.play_tone(1);
+            sleep_ms(200);
+            fc_buzzer.stop();
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
                 DEBUG_PRINT("NEW TUNING PACKET RECEIVED! Mask: %d\n", new_pids.update_mask);
@@ -132,9 +140,6 @@ void core1_entry() {
                         r_accel = new_r_a;
                         tuning_updates[3] = true;
                         DEBUG_PRINT("EKF Updated: %f, %f, %f\n", q_gyro, q_bias, r_accel);
-                        fc_buzzer.play_tone(1);
-                        sleep_ms(200);
-                        fc_buzzer.stop();
                     }
                 }
 
@@ -153,7 +158,7 @@ void core1_entry() {
                 }
 
                 if (rp_changed || yaw_changed || bias_changed) {
-                    fc_buzzer.play_tone(1);
+                    fc_buzzer.play_tone(2);
                     sleep_ms(200);
                     fc_buzzer.stop();
                 }
@@ -181,6 +186,8 @@ void core1_entry() {
             radio.sendTelemetry(&my_telemetry);
         }
 
+        check_serial_commands();
+        
         // Tiny sleep to prevent Core 1 from aggressively locking the system bus
         sleep_ms(1);
     }

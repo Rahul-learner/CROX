@@ -131,10 +131,10 @@ void Blackbox::dump_flash_to_usb() {
   const uint8_t *flash_data = (const uint8_t *)(XIP_BASE + FLASH_TARGET_OFFSET);
   size_t byte_index = 0;
 
-  // Loop through the maximum possible packets that could fit in our sector
   for (size_t i = 0; i < MAX_BLACKBOX_PACKETS; i++) {
     BlackboxPacket p;
     memcpy(&p, &flash_data[byte_index], sizeof(BlackboxPacket));
+    byte_index += sizeof(BlackboxPacket); // Increment immediately so `continue` doesn't get stuck!
 
     // --- POWER LOSS FIX ---
     // Empty flash memory defaults to all 1s (0xFF).
@@ -165,8 +165,6 @@ void Blackbox::dump_flash_to_usb() {
            p.yaw_rate, p.pid_roll, p.pid_pitch, p.pid_yaw, p.rc_roll,
            p.rc_pitch, p.rc_yaw, p.rc_throttle, p.motor1, p.motor2, p.motor3,
            p.motor4, p.dt_us);
-
-    byte_index += sizeof(BlackboxPacket);
   }
   printf("--- END BLACKBOX DUMP ---\n");
 }

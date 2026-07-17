@@ -75,7 +75,7 @@ float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 // Global variables for filtered data
 float roll = 0.0f, pitch = 0.0f, yaw = 0.0f; // Added yaw
 volatile bool imu_data_ready = false; // Flag set by interrupt handler
-bool was_armed = false;
+bool is_armed = false;
 
 // Global variable for tracking time
 uint64_t last_update_ekf_us = 0;
@@ -148,7 +148,11 @@ int main() {
     last_update_ekf_us = time_us_64();
     last_update_pid_us = time_us_64();
     uint64_t last_update_rc_us = time_us_64();
-    bool first_throttle_on = true;
+    
+    uint64_t arming_start_us = 0;
+    uint64_t disarming_start_us = 0;
+    float raw_receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
     bool run_accel_update = true;
     bool blackbox_updated = false;
     bool blackbox_dumped = false;
@@ -161,7 +165,7 @@ int main() {
 
         uint64_t current_pwm_update = time_us_64();
         if ((current_pwm_update - last_update_rc_us) > 1000000/50) {
-            receiver.read_pwm(receiver_pwm);
+            receiver.read_pwm(receiver_pwm, raw_receiver_pwm);
 
             // reverse the roll
             receiver_pwm[0] *= -1;
@@ -180,39 +184,49 @@ int main() {
             uint64_t end_ekf = time_us_64();
             uint64_t ekf_calc_time = end_ekf - start_ekf;
 
-            if (receiver_pwm[2] > 1005.0f) {
-                was_armed = true;
+            bool throttle_active = receiver_pwm[2] > 1050.0f;
 
-                if (first_throttle_on) {
-                    if (receiver_pwm[2] > 1051.0f) {
-                        motor.reset();
-                        
-                        static uint64_t last_beep_time = 0;
-                        if (time_us_64() - last_beep_time > 400000) {
-                            fc_buzzer.play_tone(1);
-                            DEBUG_PRINT("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
-                            gpio_put(PICO_DEFAULT_LED_PIN, 1);
-                            last_beep_time = time_us_64();
-                        } else if (time_us_64() - last_beep_time > 200000) {
-                            gpio_put(PICO_DEFAULT_LED_PIN, 0);
-                            fc_buzzer.stop();
-                        }
-                        continue;
-                    } else {
+            if (throttle_active) {
+                if (!is_armed) {
+                    bool is_level = (roll < 25.0f && roll > -25.0f) && (pitch < 25.0f && pitch > -25.0f);
+                    
+                    if (is_level) {
+                        is_armed = true;
                         fc_buzzer.stop();
                         fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
-                        blackbox.clear_blackbox_data();
-                        first_throttle_on = false;
+                        
+                        BlackboxPacket sep;
+                        memset(&sep, 0, sizeof(BlackboxPacket));
+                        sep.dt_us = 0xFFFE;
+                        blackbox.write_packet(sep);
+                        
                         last_update_ekf_us = time_us_64();
-                        continue;
+                    } else {
+                        // Play error beep if not level
+                        static uint64_t last_error_beep = 0;
+                        if (time_us_64() - last_error_beep > 1000000) {
+                            fc_buzzer.play_melody(Tunes::error_level, Tunes::error_level_len);
+                            last_error_beep = time_us_64();
+                        }
                     }
                 }
+            } else {
+                if (is_armed) {
+                    is_armed = false;
+                    motor.reset();
+                    fc_buzzer.stop();
+                    fc_buzzer.play_melody(Tunes::disarmed, Tunes::disarmed_len);
+                }
+            }
 
+            if (!is_armed) {
+                handle_disarmed_state(motor, filter, blackbox_updated, blackbox_dumped);
+            } else {
                 gpio_put(PICO_DEFAULT_LED_PIN, 1);
 
                 uint64_t current_time_pid_us = time_us_64();
                 uint64_t pid_calc_time = 0;
-                if (((current_time_pid_us - last_update_pid_us) >= 2040) && receiver_pwm[2] > 1050.0f) {
+                if ((current_time_pid_us - last_update_pid_us) >= 2040) {
                     dt_pid = (current_time_pid_us - last_update_pid_us) / 1000000.0f;
                     last_update_pid_us = current_time_pid_us;
                     
@@ -227,17 +241,15 @@ int main() {
                     update_telemetry_and_blackbox(motor, gz_rate, dt_ekf, dt_pid, current_time_telemetry_us, blackbox_updated);
                     last_update_telemetry_us = current_time_telemetry_us;
                     
-                    DEBUG_PRINT("EKF calc us: %llu, PID calc us: %llu\n", ekf_calc_time, pid_calc_time);
-                    DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: "
-                                "%.2f, RC_Yaw: %.2f, PID_Roll: %.2f, PID_Pitch: %.2f, PID_Yaw: %.2f, "
+                    DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: %.2f, "
+                                "EKF_calc_us: %llu, PID_calc_us: %llu, "
+                                "RC_Yaw: %.2f, RC_Throttle: %.2f, PID_Roll: %.2f, PID_Pitch: %.2f, PID_Yaw: %.2f, "
                                 "dt_pid: %f, dt_ekf: %f\n",
                                 roll, pitch, gz_rate, receiver_pwm[0], receiver_pwm[1],
-                                receiver_pwm[3], roll_control_output, pitch_control_output,
+                                ekf_calc_time, pid_calc_time,
+                                receiver_pwm[3], receiver_pwm[2], roll_control_output, pitch_control_output,
                                 yaw_control_output, dt_pid, dt_ekf);
                 }
-
-            } else {
-                handle_disarmed_state(motor, filter, blackbox_updated, blackbox_dumped, first_throttle_on);
             }
         }
     }
