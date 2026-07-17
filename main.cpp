@@ -71,6 +71,9 @@ volatile float shared_dt_us = 0.0f;
 
 // receiver data
 float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+float rc_roll_bias = 0.0f;
+float rc_pitch_bias = 0.0f;
+float rc_yaw_bias = 0.0f;
 
 // Global variables for filtered data
 float roll = 0.0f, pitch = 0.0f, yaw = 0.0f; // Added yaw
@@ -167,6 +170,11 @@ int main() {
         if ((current_pwm_update - last_update_rc_us) > 1000000/50) {
             receiver.read_pwm(receiver_pwm, raw_receiver_pwm);
 
+            // Apply calibration biases
+            receiver_pwm[0] -= rc_roll_bias;
+            receiver_pwm[1] -= rc_pitch_bias;
+            receiver_pwm[3] -= rc_yaw_bias;
+
             // reverse the roll
             receiver_pwm[0] *= -1;
 
@@ -192,6 +200,11 @@ int main() {
                     bool is_throttle_safe = receiver_pwm[2] < 1050.0f && receiver_pwm[2] > 1000.0f;
                     
                     if (is_level && is_throttle_safe) {
+                        // Calibrate receiver PWM offsets before arming
+                        fc_buzzer.play_tone(1); // Warning tone during calibration
+                        calibrate_receiver(receiver, rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
+                        fc_buzzer.stop();
+
                         is_armed = true;
                         fc_buzzer.stop();
                         fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
