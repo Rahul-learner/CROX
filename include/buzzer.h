@@ -48,6 +48,18 @@ namespace Tunes {
     };
     static const int armed_len = sizeof(armed) / sizeof(armed[0]);
 
+    // 4. System Disarmed (Two descending tones)
+    static const MelodyNote disarmed[] = {
+        {NOTE_G5, 100}, {REST, 50}, {NOTE_C5, 150}
+    };
+    static const int disarmed_len = sizeof(disarmed) / sizeof(disarmed[0]);
+
+    // 5. Error: Not Level (Harsh buzzer warning)
+    static const MelodyNote error_level[] = {
+        {NOTE_C4, 150}, {REST, 50}, {NOTE_C4, 150}, {REST, 50}, {NOTE_C4, 150}
+    };
+    static const int error_level_len = sizeof(error_level) / sizeof(error_level[0]);
+
     // 4. Low Battery or RC Signal Loss Alarm (Loud, annoying repeating pattern)
     static const MelodyNote alarm_warning[] = {
         {NOTE_C6, 150}, {REST, 150}, {NOTE_C6, 150}, {REST, 500}
