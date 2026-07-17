@@ -67,8 +67,8 @@ void check_serial_commands() {
 void core1_entry() {
     multicore_lockout_victim_init();
     uint32_t last_telemetry_time = time_us_32();
-    TelemetryPacket my_telemetry;
-    PIDTuningPacket new_pids;
+    TelemetryPacket my_telemetry = {};
+    PIDTuningPacket new_pids = {};
     bool radio_restarted = false;
 
     while (true) {
@@ -83,50 +83,80 @@ void core1_entry() {
             DEBUG_PRINT("New Data Available!..");
             // Try to read it as a PID update (your existing code)
             if (radio.readPID(&new_pids)) {
-                DEBUG_PRINT("NEW PID GAINS and BIAS ANGLES RECEIVED!\n");
+                DEBUG_PRINT("NEW TUNING PACKET RECEIVED! Mask: %d\n", new_pids.update_mask);
                 bool rp_changed = false, yaw_changed = false, bias_changed = false;
 
-                float new_kp_rp = new_pids.kp_roll_pitch / 1000.0f;
-                float new_ki_rp = new_pids.ki_roll_pitch / 1000.0f;
-                float new_kd_rp = new_pids.kd_roll_pitch / 1000.0f;
-                if (pid_p_roll_pitch != new_kp_rp || pid_i_roll_pitch != new_ki_rp || pid_d_roll_pitch != new_kd_rp) {
-                    pid_p_roll_pitch = new_kp_rp;
-                    pid_i_roll_pitch = new_ki_rp;
-                    pid_d_roll_pitch = new_kd_rp;
-                    rp_changed = true;
+                if (new_pids.update_mask & 0x01) {
+                    float new_kp_rp = new_pids.kp_roll_pitch / 1000.0f;
+                    float new_ki_rp = new_pids.ki_roll_pitch / 1000.0f;
+                    float new_kd_rp = new_pids.kd_roll_pitch / 1000.0f;
+                    if (pid_p_roll_pitch != new_kp_rp || pid_i_roll_pitch != new_ki_rp || pid_d_roll_pitch != new_kd_rp) {
+                        pid_p_roll_pitch = new_kp_rp;
+                        pid_i_roll_pitch = new_ki_rp;
+                        pid_d_roll_pitch = new_kd_rp;
+                        rp_changed = true;
+                    }
                 }
 
-                float new_kp_y = new_pids.kp_yaw / 1000.0f;
-                float new_ki_y = new_pids.ki_yaw / 1000.0f;
-                float new_kd_y = new_pids.kd_yaw / 1000.0f;
-                if (pid_p_yaw != new_kp_y || pid_i_yaw != new_ki_y || pid_d_yaw != new_kd_y) {
-                    pid_p_yaw = new_kp_y;
-                    pid_i_yaw = new_ki_y;
-                    pid_d_yaw = new_kd_y;
-                    yaw_changed = true;
+                if (new_pids.update_mask & 0x02) {
+                    float new_kp_y = new_pids.kp_yaw / 1000.0f;
+                    float new_ki_y = new_pids.ki_yaw / 1000.0f;
+                    float new_kd_y = new_pids.kd_yaw / 1000.0f;
+                    if (pid_p_yaw != new_kp_y || pid_i_yaw != new_ki_y || pid_d_yaw != new_kd_y) {
+                        pid_p_yaw = new_kp_y;
+                        pid_i_yaw = new_ki_y;
+                        pid_d_yaw = new_kd_y;
+                        yaw_changed = true;
+                    }
                 }
 
-                float new_b_r = new_pids.bias_roll / 1000.0f;
-                float new_b_p = new_pids.bias_pitch / 1000.0f;
-                float new_b_y = new_pids.bias_yaw / 1000.0f;
-                if (bias_roll != new_b_r || bias_pitch != new_b_p || bias_yaw != new_b_y) {
-                    bias_roll = new_b_r;
-                    bias_pitch = new_b_p;
-                    bias_yaw = new_b_y;
-                    bias_changed = true;
+                if (new_pids.update_mask & 0x04) {
+                    float new_b_r = new_pids.bias_roll / 1000.0f;
+                    float new_b_p = new_pids.bias_pitch / 1000.0f;
+                    float new_b_y = new_pids.bias_yaw / 1000.0f;
+                    if (bias_roll != new_b_r || bias_pitch != new_b_p || bias_yaw != new_b_y) {
+                        bias_roll = new_b_r;
+                        bias_pitch = new_b_p;
+                        bias_yaw = new_b_y;
+                        bias_changed = true;
+                    }
                 }
 
-                if (rp_changed) tuning_updates[0] = true;
-                if (yaw_changed) tuning_updates[1] = true;
-                if (bias_changed) tuning_updates[2] = true;
+                if (new_pids.update_mask & 0x08) {
+                    float new_q_g = new_pids.q_gyro / 100000.0f;
+                    float new_q_b = new_pids.q_bias / 1000000.0f;
+                    float new_r_a = new_pids.r_accel / 100.0f;
+                    if (q_gyro != new_q_g || q_bias != new_q_b || r_accel != new_r_a) {
+                        q_gyro = new_q_g;
+                        q_bias = new_q_b;
+                        r_accel = new_r_a;
+                        tuning_updates[3] = true;
+                        DEBUG_PRINT("EKF Updated: %f, %f, %f\n", q_gyro, q_bias, r_accel);
+                        fc_buzzer.play_tone(1);
+                        sleep_ms(200);
+                        fc_buzzer.stop();
+                    }
+                }
 
-                DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
-                roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
-                fc_buzzer.play_tone(1);
-                sleep_ms(200);
-                fc_buzzer.stop();
+                if (rp_changed) {
+                    tuning_updates[0] = true;
+                    roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                    pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                }
+                if (yaw_changed) {
+                    tuning_updates[1] = true;
+                    yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
+                }
+                if (bias_changed) {
+                    tuning_updates[2] = true;
+                    DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
+                }
+
+                if (rp_changed || yaw_changed || bias_changed) {
+                    fc_buzzer.play_tone(1);
+                    sleep_ms(200);
+                    fc_buzzer.stop();
+                }
             }
         }
 

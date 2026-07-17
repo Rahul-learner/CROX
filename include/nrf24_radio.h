@@ -24,12 +24,14 @@ struct TelemetryPacket {
     int16_t pid_pitch;
     int16_t pid_yaw;
     uint16_t dt_s;
+    uint8_t reserved[9]; // Pad to 32 bytes (23 bytes used + 9 padding)
     uint8_t checksum;
 };
 
 struct PIDTuningPacket {
     uint8_t header1;
     uint8_t header2;
+    uint8_t update_mask; // 0x01=PID_RP, 0x02=PID_YAW, 0x04=BIAS, 0x08=EKF
     int16_t kp_roll_pitch;
     int16_t ki_roll_pitch;
     int16_t kd_roll_pitch;
@@ -39,6 +41,10 @@ struct PIDTuningPacket {
     int16_t bias_roll;
     int16_t bias_pitch;
     int16_t bias_yaw;
+    int16_t q_gyro;      // Scaled by 100,000
+    int16_t q_bias;      // Scaled by 1,000,000
+    int16_t r_accel;     // Scaled by 100
+    uint8_t reserved[4]; // Pad to 32 bytes
     uint8_t checksum;
 };
 

@@ -144,6 +144,7 @@ void handle_disarmed_state(WritePWM &motor, QuaternionEKF &filter,
                            bool &blackbox_updated, bool &blackbox_dumped,
                            bool &first_throttle_on) {
   motor.reset();
+  fc_buzzer.stop();
   // write the blackbox to the flash
   if (blackbox_updated) {
     blackbox.write_blackbox_to_flash();
@@ -157,12 +158,16 @@ void handle_disarmed_state(WritePWM &motor, QuaternionEKF &filter,
     blackbox_dumped = false;
   }
   send_telemetry = false;
-  filter.reset();
   roll_pid.reset();
   pitch_pid.reset();
   yaw_pid.reset();
   first_throttle_on = true;
-  DEBUG_PRINT("Not Armed. Throttle: %f\n", receiver_pwm[2]);
+  
+  static uint64_t last_print_time = 0;
+  if (time_us_64() - last_print_time > 200000) {
+      DEBUG_PRINT("Not Armed. Throttle: %f\n", receiver_pwm[2]);
+      last_print_time = time_us_64();
+  }
+  
   gpio_put(PICO_DEFAULT_LED_PIN, 0);
-  sleep_ms(200);
 }

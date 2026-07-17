@@ -16,11 +16,13 @@
 NRF24 radio(NRF_SPI_PORT, NRF_CE_PIN, NRF_CSN_PIN, NRF_SCK_PIN, NRF_MOSI_PIN, NRF_MISO_PIN);
 
 // --- Tuning Variables & Flags ---
-float bias_roll = 0.0f, bias_pitch = 0.0f, bias_yaw = 0.0f;
-float q_gyro = 0.0f, q_bias = 0.0f, r_accel = 0.0f;
-float pid_p_roll_pitch = 1.0f, pid_i_roll_pitch = 0.0f, pid_d_roll_pitch = 0.0f;
-float pid_p_yaw = 0.0f, pid_i_yaw = 0.0f, pid_d_yaw = 0.0f;
+// Defaults match those in DroneFC/RP2350/config/config.h
+float bias_roll = -3.95f, bias_pitch = 1.87f, bias_yaw = 0.0f;
+float q_gyro = 0.001f, q_bias = 0.00001f, r_accel = 20.0f;
+float pid_p_roll_pitch = 1.95f, pid_i_roll_pitch = 0.15f, pid_d_roll_pitch = 0.47f;
+float pid_p_yaw = 2.1f, pid_i_yaw = 0.1f, pid_d_yaw = 0.0f;
 bool send_tuning_flag = false;
+uint8_t send_tuning_mask = 0;
 bool radio_restarted = false;
 
 // ============================================================================
@@ -32,23 +34,29 @@ void process_command(char* buffer) {
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
         printf("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
+        send_tuning_mask |= 0x08;
+        send_tuning_flag = true;
     }
     // NEW: Roll & Pitch PID
     else if (strncmp(buffer, "PID_RP,", 7) == 0) {
         sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
         printf("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+        send_tuning_mask |= 0x01;
+        send_tuning_flag = true;
     }
     // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
         printf("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
+        send_tuning_mask |= 0x02;
+        send_tuning_flag = true;
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
         printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
+        send_tuning_mask |= 0x04;
+        send_tuning_flag = true;
     }
-
-    send_tuning_flag = true;
 }
 
 // Non-blocking serial listener
@@ -106,8 +114,8 @@ int main() {
     printf("Ground Station Online. Listening for live Telemetry...\n");
     printf("Type 'PID,1.5,0.05,0.2' and press Enter to send tuning data.\n\n");
 
-    TelemetryPacket incoming_telemetry;
-    PIDTuningPacket outgoing_pids;
+    TelemetryPacket incoming_telemetry = {};
+    PIDTuningPacket outgoing_pids = {};
     uint32_t last_heartbeat = time_us_32();
     float last_dt_s = 0.0f;
 
@@ -129,11 +137,16 @@ int main() {
             int16_t bias_roll_rec = (int16_t)(bias_roll * 1000.0f);
             int16_t bias_pitch_rec = (int16_t)(bias_pitch * 1000.0f);
             int16_t bias_yaw_rec = (int16_t)(bias_yaw * 1000.0f);
+            int16_t ekf_q_gyro = (int16_t)(q_gyro * 100000.0f);
+            int16_t ekf_q_bias = (int16_t)(q_bias * 1000000.0f);
+            int16_t ekf_r_accel = (int16_t)(r_accel * 100.0f);
 
             // Apply to all axes (or you can separate them in your command string later)
+            outgoing_pids.update_mask = send_tuning_mask;
             outgoing_pids.kp_roll_pitch = p_roll_pitch; outgoing_pids.ki_roll_pitch = i_roll_pitch; outgoing_pids.kd_roll_pitch = d_roll_pitch;
             outgoing_pids.kp_yaw = p_yaw; outgoing_pids.ki_yaw = i_yaw; outgoing_pids.kd_yaw = d_yaw;
             outgoing_pids.bias_roll = bias_roll_rec ; outgoing_pids.bias_pitch = bias_pitch_rec; outgoing_pids.bias_yaw = bias_yaw_rec;
+            outgoing_pids.q_gyro = ekf_q_gyro; outgoing_pids.q_bias = ekf_q_bias; outgoing_pids.r_accel = ekf_r_accel;
 
             printf("\nBroadcasting new PIDs to Drone...\n");
 
@@ -144,6 +157,7 @@ int main() {
             }
 
             send_tuning_flag = false;
+            send_tuning_mask = 0;
         }
         // 3. Check for incoming Telemetry from the drone
         while (radio.dataAvailable()) {

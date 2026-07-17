@@ -169,43 +169,46 @@ int main() {
             last_update_rc_us = current_pwm_update;
         }
         
-        if (receiver_pwm[2] > 1005.0f) {
-            was_armed = true;
-            if (first_throttle_on) {
-                fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
-                blackbox.clear_blackbox_data();
+        // Always process IMU data if ready, regardless of armed state
+        if (imu_data_ready) {
+            imu_data_ready = false;
+            loop_counter++;
 
-                while (receiver_pwm[2] > 1051.0f) {
-                    motor.reset();
-                    fc_buzzer.play_tone(1);
-                    DEBUG_PRINT("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
-                    gpio_put(PICO_DEFAULT_LED_PIN, 1);
-                    sleep_ms(200);
-                    receiver.read_throttle(receiver_pwm[2]);
-                    gpio_put(PICO_DEFAULT_LED_PIN, 0);
-                    fc_buzzer.stop();
-                    sleep_ms(200);
+            uint64_t start_ekf = time_us_64();
+            float gz_rate = 0.0f;
+            update_sensors_and_ekf(filter, gyro_bias_x, gyro_bias_y, gyro_bias_z, dt_ekf, run_accel_update, gz_rate);
+            uint64_t end_ekf = time_us_64();
+            uint64_t ekf_calc_time = end_ekf - start_ekf;
+
+            if (receiver_pwm[2] > 1005.0f) {
+                was_armed = true;
+
+                if (first_throttle_on) {
+                    if (receiver_pwm[2] > 1051.0f) {
+                        motor.reset();
+                        
+                        static uint64_t last_beep_time = 0;
+                        if (time_us_64() - last_beep_time > 400000) {
+                            fc_buzzer.play_tone(1);
+                            DEBUG_PRINT("Throttle is high! Throttle: %f\n", receiver_pwm[2]);
+                            gpio_put(PICO_DEFAULT_LED_PIN, 1);
+                            last_beep_time = time_us_64();
+                        } else if (time_us_64() - last_beep_time > 200000) {
+                            gpio_put(PICO_DEFAULT_LED_PIN, 0);
+                            fc_buzzer.stop();
+                        }
+                        continue;
+                    } else {
+                        fc_buzzer.stop();
+                        fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
+                        blackbox.clear_blackbox_data();
+                        first_throttle_on = false;
+                        last_update_ekf_us = time_us_64();
+                        continue;
+                    }
                 }
-                first_throttle_on = false;
-                last_update_ekf_us = time_us_64();
-                continue;
-            } else {
-                gpio_put(PICO_DEFAULT_LED_PIN, 1);
-            }
-            
-            // Only process data if the IMU interrupt indicates new data is ready
-            if (imu_data_ready) {
-                // Reset the flag immediately to avoid missing subsequent interrupts
-                imu_data_ready = false;
-                loop_counter++;
 
-                uint64_t start_ekf = time_us_64();
-                float gz_rate = 0.0f;
-                
-                update_sensors_and_ekf(filter, gyro_bias_x, gyro_bias_y, gyro_bias_z, dt_ekf, run_accel_update, gz_rate);
-                
-                uint64_t end_ekf = time_us_64();
-                uint64_t ekf_calc_time = end_ekf - start_ekf;
+                gpio_put(PICO_DEFAULT_LED_PIN, 1);
 
                 uint64_t current_time_pid_us = time_us_64();
                 uint64_t pid_calc_time = 0;
@@ -232,10 +235,10 @@ int main() {
                                 receiver_pwm[3], roll_control_output, pitch_control_output,
                                 yaw_control_output, dt_pid, dt_ekf);
                 }
-            }
 
-        } else {
-            handle_disarmed_state(motor, filter, blackbox_updated, blackbox_dumped, first_throttle_on);
+            } else {
+                handle_disarmed_state(motor, filter, blackbox_updated, blackbox_dumped, first_throttle_on);
+            }
         }
     }
 

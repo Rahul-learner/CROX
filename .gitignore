@@ -4,3 +4,4 @@ build_gs_monitor/
 pico_sdk_import.cmake
 compile_commands.json
 .venv/
+logs/
