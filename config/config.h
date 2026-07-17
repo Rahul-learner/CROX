@@ -7,7 +7,7 @@
 // SYSTEM
 // =============================================================================
 #define CPU_FREQ_KHZ 250000
-// #define DEBUG_MODE // Uncomment to enable debug printf
+#define DEBUG_MODE // Uncomment to enable debug printf
 #define CALIBRATION_SAMPLES 1000
 
 // =============================================================================
@@ -95,9 +95,16 @@
 // =============================================================================
 // EKF DEFAULTS
 // =============================================================================
-#define DEFAULT_Q_GYRO 0.001f // increase for gyro trust, decrease for noisey gyro
-#define DEFAULT_Q_BIAS 0.00001f // increase for gyro bias trust, decrease for noisey gyro bias
-#define DEFAULT_R_ACCEL 20.0f   // measurement noise, larger value means less trust in measurement
+#define DEFAULT_Q_GYRO 0.001f
+#define DEFAULT_Q_BIAS 0.00001f
+#define DEFAULT_R_ACCEL 20.0f
+#define DYNAMIC_R_MAX 100.0f
+
+// =============================================================================
+// TPA SETTINGS
+// =============================================================================
+#define TPA_BREAKPOINT 1350.0f  // Throttle value above which PID attenuation begins (just above hover)
+#define TPA_FACTOR 0.30f        // 30% reduction in P and D gains at maximum throttle (2000)
 
 // =============================================================================
 // ANGLE BIAS DEFAULTS

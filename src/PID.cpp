@@ -51,7 +51,6 @@ void PIDController::set_pid(float p, float i, float d) {
     kp = p;
     ki = i;
     kd = d;
-    DEBUG_PRINT("PID updated: P=%.3f, I=%.3f, D=%.3f\n", kp, ki, kd);
 }
 
 // Call this immediately upon arming the motors

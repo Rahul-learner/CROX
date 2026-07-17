@@ -36,7 +36,14 @@ void update_sensors_and_ekf(QuaternionEKF &filter, float gyro_bias_x,
   // Execute the Filter
   filter.predict(gx, gy, gz, dt_ekf, q_gyro, q_bias);
   if (run_accel_update) {
-    filter.update(ax, ay, az, r_accel);
+    float r_accel_dynamic = r_accel;
+    if (receiver_pwm[2] > 1050.0f) { // Only scale if actually flying
+        float throttle_pct = (receiver_pwm[2] - 1050.0f) / (2000.0f - 1050.0f);
+        if (throttle_pct > 1.0f) throttle_pct = 1.0f;
+        if (throttle_pct < 0.0f) throttle_pct = 0.0f;
+        r_accel_dynamic = r_accel + throttle_pct * (DYNAMIC_R_MAX - r_accel);
+    }
+    filter.update(ax, ay, az, r_accel_dynamic);
   }
   run_accel_update = !run_accel_update;
   filter.getEulerAngles(roll, pitch, yaw);
@@ -48,6 +55,19 @@ void update_sensors_and_ekf(QuaternionEKF &filter, float gyro_bias_x,
 }
 
 void update_pid_and_motors(WritePWM &motor, float gz_rate, float dt_pid) {
+  // Calculate TPA Factor (1.0 = no attenuation, 0.7 = 30% attenuation)
+  float tpa_factor = 1.0f;
+  if (receiver_pwm[2] > TPA_BREAKPOINT) {
+      float throttle_pct = (receiver_pwm[2] - TPA_BREAKPOINT) / (2000.0f - TPA_BREAKPOINT);
+      if (throttle_pct > 1.0f) throttle_pct = 1.0f;
+      tpa_factor = 1.0f - (throttle_pct * TPA_FACTOR);
+  }
+
+  // Dynamically set PIDs, scaling P and D by the TPA factor
+  roll_pid.set_pid(pid_p_roll_pitch * tpa_factor, pid_i_roll_pitch, pid_d_roll_pitch * tpa_factor);
+  pitch_pid.set_pid(pid_p_roll_pitch * tpa_factor, pid_i_roll_pitch, pid_d_roll_pitch * tpa_factor);
+  yaw_pid.set_pid(pid_p_yaw * tpa_factor, pid_i_yaw, pid_d_yaw * tpa_factor);
+
   // get the setpoint
   roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt_pid);
   pitch_control_output = pitch_pid.compute(receiver_pwm[1], pitch, dt_pid);
