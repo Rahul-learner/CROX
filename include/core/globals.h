@@ -44,7 +44,7 @@ extern float roll;
 extern float pitch;
 extern float yaw;
 extern volatile bool imu_data_ready;
-extern bool was_armed;
+extern bool is_armed;
 
 extern uint64_t last_update_ekf_us;
 extern uint64_t last_update_pid_us;

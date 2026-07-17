@@ -44,13 +44,15 @@ ReadPWM::ReadPWM() {
 }
 
 // Read the PWM receiver signal from FIFO
-void ReadPWM::read_pwm(float (&channel)[4]) {
+void ReadPWM::read_pwm(float (&channel)[4], float (&raw_channel)[4]) {
     for (int i = 0; i < NUM_CHANNELS; ++i) {
         PIO p = pio;
         uint sm = i;
         if (!pio_sm_is_rx_fifo_empty(p, sm)) {
             uint32_t period_ticks = pio_sm_get(p, sm);
             float period_us = ticks_to_us(period_ticks);
+            
+            raw_channel[i] = period_us;
 
             if (i == 2) {
                 // Throttle stays as raw microseconds
@@ -60,6 +62,8 @@ void ReadPWM::read_pwm(float (&channel)[4]) {
                 channel[i] = map_with_deadband(period_us);
             }
         } else {
+            raw_channel[i] = (float)initial_channel[i];
+            
             if (i == 2) {
                 channel[i] = (float)initial_channel[i];
             } else {

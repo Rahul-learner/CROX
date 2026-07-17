@@ -103,7 +103,7 @@ void update_telemetry_and_blackbox(WritePWM &motor, float gz_rate, float dt_ekf,
   }
 
   // set pid outputs to 0.0 if not armed
-  if (!was_armed){
+  if (!is_armed){
     roll_control_output = 0.0f;
     pitch_control_output = 0.0f;
     yaw_control_output = 0.0f;
@@ -141,10 +141,8 @@ void update_telemetry_and_blackbox(WritePWM &motor, float gz_rate, float dt_ekf,
 }
 
 void handle_disarmed_state(WritePWM &motor, QuaternionEKF &filter,
-                           bool &blackbox_updated, bool &blackbox_dumped,
-                           bool &first_throttle_on) {
+                           bool &blackbox_updated, bool &blackbox_dumped) {
   motor.reset();
-  fc_buzzer.stop();
   // write the blackbox to the flash
   if (blackbox_updated) {
     blackbox.write_blackbox_to_flash();
@@ -161,7 +159,6 @@ void handle_disarmed_state(WritePWM &motor, QuaternionEKF &filter,
   roll_pid.reset();
   pitch_pid.reset();
   yaw_pid.reset();
-  first_throttle_on = true;
   
   static uint64_t last_print_time = 0;
   if (time_us_64() - last_print_time > 200000) {
