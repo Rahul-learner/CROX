@@ -30,14 +30,11 @@ void process_command(char* buffer) {
     else if (strncmp(buffer, "PID_RP,", 7) == 0) {
         sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
         DEBUG_PRINT("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-        pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-        roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
     }
     // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
         DEBUG_PRINT("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
-        yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
@@ -139,11 +136,10 @@ void core1_entry() {
                 }
 
                 if (rp_changed) {
-                    roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                    pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+                    DEBUG_PRINT("Roll/Pitch PID Updated\n");
                 }
                 if (yaw_changed) {
-                    yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
+                    DEBUG_PRINT("Yaw PID Updated\n");
                 }
                 if (bias_changed) {
                     DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
