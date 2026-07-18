@@ -293,9 +293,9 @@ class BlackboxViewer(QMainWindow):
 
         # 3D Graph Setup
         self.ax_3d.set_title('3D Orientation (Drone)')
-        self.ax_3d.set_xlim([-1.5, 1.5])
-        self.ax_3d.set_ylim([-1.5, 1.5])
-        self.ax_3d.set_zlim([-1.5, 1.5])
+        self.ax_3d.set_xlim([-1.0, 1.0])
+        self.ax_3d.set_ylim([-1.0, 1.0])
+        self.ax_3d.set_zlim([-1.0, 1.0])
         self.ax_3d.set_xlabel('X (Forward)')
         self.ax_3d.set_ylabel('Y (Left)')
         self.ax_3d.set_zlabel('Z (Up)')
@@ -326,7 +326,9 @@ class BlackboxViewer(QMainWindow):
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
         for p in ports:
-            self.port_combo.addItem(p.device)
+            # Filter to only show USB serial connections
+            if p.vid is not None or "usb" in p.device.lower() or "acm" in p.device.lower():
+                self.port_combo.addItem(p.device)
             
         if self.port_combo.count() == 0:
             self.port_combo.addItem("No ports found")
@@ -502,6 +504,18 @@ class BlackboxViewer(QMainWindow):
             c_idx += 1
             
         self.ax_2d.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
+        
+        # 1. Add vertical time cursor
+        self.time_cursor = self.ax_2d.axvline(x=self.calculated_time[0], color='black', linestyle='-', linewidth=1.5, zorder=10)
+        
+        # 2. Add highlight for Throttle > 1300
+        if 'RC_Throttle' in self.headers:
+            t_idx = self.headers.index('RC_Throttle')
+            throttle_data = self.data_matrix[:, t_idx]
+            self.ax_2d.fill_between(self.calculated_time, 0, 1, where=(throttle_data > 1300),
+                                    color='red', alpha=0.15, transform=self.ax_2d.get_xaxis_transform(),
+                                    label='Hovering (>1300)')
+                                    
         self.update_plot_visibility()
 
     def update_plot_visibility(self):
@@ -561,17 +575,31 @@ class BlackboxViewer(QMainWindow):
         self.axis_line_z.set_3d_properties([0, z_axis[2]])
 
         # Net Force Vector Visualization (Thrust + Gravity)
-        # Assume 1500 average PWM per motor perfectly hovers (T=1.0 cancels G=1.0)
-        thrust_mag = max(((m1 + m2 + m3 + m4) - 4000) / 2000.0, 0.0)
+        HOVER_THROTTLE = 1300.0
         
-        # Calculate local thrust vector, rotate to global, and add global gravity vector
-        thrust_vector_global = R @ np.array([0, 0, thrust_mag])
-        gravity_vector_global = np.array([0, 0, 0.0])
+        # Linear map: idle (4000) -> 0.0, hover (4 * 1300) -> 1.0 (cancels gravity)
+        total_thrust = m1 + m2 + m3 + m4
+        hover_total = 4.0 * HOVER_THROTTLE
+        idle_total = 4000.0
+        thrust_mag = max((total_thrust - idle_total) / (hover_total - idle_total), 0.0)
+        
+        # Calculate exaggerated torque for the yellow vector so it leans visibly
+        # Pitch Torque (X axis - Forward): Rear (M1, M3) - Front (M2, M4)
+        torque_x = ((m1 + m3) - (m2 + m4)) / 1000.0
+        # Roll Torque (Y axis - Left): Right (M1, M2) - Left (M3, M4)
+        torque_y = ((m1 + m2) - (m3 + m4)) / 1000.0
+        
+        torque_exaggeration = 5.0
+        thrust_vector_local = np.array([torque_x * torque_exaggeration, torque_y * torque_exaggeration, thrust_mag])
+        
+        # Rotate local thrust to global, and add global gravity vector
+        thrust_vector_global = R @ thrust_vector_local
+        gravity_vector_global = np.array([0, 0, -1.0])
         
         net_vector = thrust_vector_global + gravity_vector_global
         
-        # Scale by 2.0 for better visibility in the 3D plot
-        net_vector *= 2.0
+        # Scale by 1.5 for better visibility in the 3D plot
+        net_vector *= 1.5
         
         self.thrust_line.set_data([0, net_vector[0]], [0, net_vector[1]])
         self.thrust_line.set_3d_properties([0, net_vector[2]])
@@ -651,7 +679,12 @@ class BlackboxViewer(QMainWindow):
         if self.data_matrix is None or value >= len(self.data_matrix):
             return
             
-        self.time_lbl.setText(f"Time: {self.calculated_time[value]:.2f} s")
+        t = self.calculated_time[value]
+        self.time_lbl.setText(f"Time: {t:.2f} s")
+        
+        # Update the time cursor position on the 2D plot
+        if hasattr(self, 'time_cursor'):
+            self.time_cursor.set_xdata([t, t])
         
         # Find active tuning for this time index
         if hasattr(self, 'current_tuning_events'):
