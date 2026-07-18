@@ -59,3 +59,7 @@ void PIDController::reset() {
     previous_measurement = 0.0f;
     previous_derivative = 0.0f;
 }
+
+void PIDController::reset_integral() {
+    integral_error = 0.0f;
+}

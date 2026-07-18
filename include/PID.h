@@ -25,4 +25,7 @@ public:
 
     // Call this immediately upon arming the motors
     void reset();
+    
+    // Clear the integral error (used to prevent windup on the ground)
+    void reset_integral();
 };

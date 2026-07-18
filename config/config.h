@@ -7,7 +7,7 @@
 // SYSTEM
 // =============================================================================
 #define CPU_FREQ_KHZ 250000
-#define DEBUG_MODE // Uncomment to enable debug printf
+// #define DEBUG_MODE // Uncomment to enable debug printf
 #define CALIBRATION_SAMPLES 1000
 
 // =============================================================================
@@ -79,13 +79,13 @@
 // =============================================================================
 // PID DEFAULTS (Roll & Pitch)
 // =============================================================================
-#define DEFAULT_PID_P_ROLL_PITCH 1.95f
-#define DEFAULT_PID_I_ROLL_PITCH 0.15f
-#define DEFAULT_PID_D_ROLL_PITCH 0.47f
+#define DEFAULT_PID_P_ROLL_PITCH 6.5f
+#define DEFAULT_PID_I_ROLL_PITCH 0.06f
+#define DEFAULT_PID_D_ROLL_PITCH 1.67f
 
 // PID DEFAULTS (Yaw)
-#define DEFAULT_PID_P_YAW 2.1f
-#define DEFAULT_PID_I_YAW 0.1f
+#define DEFAULT_PID_P_YAW 4.5f
+#define DEFAULT_PID_I_YAW 0.2f
 #define DEFAULT_PID_D_YAW 0.0f
 
 // PID Constraints
@@ -97,7 +97,7 @@
 // =============================================================================
 #define DEFAULT_Q_GYRO 0.001f
 #define DEFAULT_Q_BIAS 0.00001f
-#define DEFAULT_R_ACCEL 20.0f
+#define DEFAULT_R_ACCEL 30.0f
 #define DYNAMIC_R_MAX 100.0f
 
 // =============================================================================

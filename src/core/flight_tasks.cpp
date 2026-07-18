@@ -55,6 +55,13 @@ void update_sensors_and_ekf(QuaternionEKF &filter, float gyro_bias_x,
 }
 
 void update_pid_and_motors(WritePWM &motor, float gz_rate, float dt_pid) {
+  // Prevent Integral Windup while sitting on the ground
+  if (receiver_pwm[2] < 1050.0f) {
+      roll_pid.reset_integral();
+      pitch_pid.reset_integral();
+      yaw_pid.reset_integral();
+  }
+
   // Calculate TPA Factor (1.0 = no attenuation, 0.7 = 30% attenuation)
   float tpa_factor = 1.0f;
   if (receiver_pwm[2] > TPA_BREAKPOINT) {

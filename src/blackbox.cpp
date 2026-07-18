@@ -143,6 +143,23 @@ void Blackbox::write_blackbox_to_flash() {
     }
   }
 
+  // Write an explicit End-Of-Flight packet before padding
+  BlackboxPacket eof_packet;
+  memset(&eof_packet, 0, sizeof(eof_packet));
+  eof_packet.dt_us = 0xFFFF;
+  
+  uint8_t *eof_ptr = (uint8_t *)&eof_packet;
+  for (size_t b = 0; b < sizeof(BlackboxPacket); b++) {
+    page_buffer[page_idx++] = eof_ptr[b];
+    if (page_idx == 256) {
+      if (flash_write_offset % 4096 == 0) flash_range_erase(FLASH_TARGET_OFFSET + flash_write_offset, 4096);
+      flash_range_program(FLASH_TARGET_OFFSET + flash_write_offset, page_buffer, 256);
+      flash_write_offset += 256;
+      if (flash_write_offset >= FLASH_MAX_SIZE) flash_write_offset = 0;
+      page_idx = 0;
+    }
+  }
+
   // Pad the final page
   if (page_idx > 0) {
     while (page_idx < 256) {
@@ -182,9 +199,12 @@ void Blackbox::dump_flash_to_usb() {
         ((uint8_t*)&p)[b] = flash_data[addr];
     }
 
+    uint32_t packet_start = current_read;
+    current_read = (current_read + sizeof(BlackboxPacket)) % FLASH_MAX_SIZE;
+
     if (p.dt_us == 0xFFFF) {
-      // Hit padding! Jump to the next page boundary
-      uint32_t next_page = ((current_read / 256) + 1) * 256;
+      // Hit explicit EOF marker! Jump to the next page boundary
+      uint32_t next_page = ((packet_start / 256) + 1) * 256;
       current_read = next_page % FLASH_MAX_SIZE;
       continue;
     }
@@ -206,7 +226,6 @@ void Blackbox::dump_flash_to_usb() {
              p.motor4, p.dt_us);
     }
 
-    current_read = (current_read + sizeof(BlackboxPacket)) % FLASH_MAX_SIZE;
   }
   printf("--- END BLACKBOX DUMP ---\n");
 }
