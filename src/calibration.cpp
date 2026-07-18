@@ -23,7 +23,7 @@ void calibrate_receiver(ReadPWM& receiver, float& rc_roll_bias, float& rc_pitch_
     float raw_rc_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float pwm_sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 10; i++) {
         receiver.read_pwm(rc_pwm, raw_rc_pwm);
 
 

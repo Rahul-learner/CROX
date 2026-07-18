@@ -50,9 +50,13 @@ public:
 
 private:
   BlackboxPacket *packet_buffer;
-  size_t head;  // Where we write the next packet
-  size_t tail;  // Where the oldest valid packet is
+  size_t head;  // Where we write the next packet in RAM
+  size_t tail;  // Where the oldest valid packet is in RAM
   size_t count; // Total packets currently in RAM
+
+  // Flash Ring Buffer Tracking
+  uint32_t flash_write_offset; // Byte offset into FLASH_MAX_SIZE where next packet will be written
+  uint32_t flash_read_offset;  // Byte offset into FLASH_MAX_SIZE where the oldest valid packet is
 };
 
 #endif // BLACKBOX_H

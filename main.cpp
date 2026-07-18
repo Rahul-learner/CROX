@@ -56,7 +56,6 @@ float pid_d_yaw = DEFAULT_PID_D_YAW;
 BlackboxPacket bb_packet;
 
 // --- Shared Variables for Dual-Core Communication ---
-volatile bool tuning_updates[4] = {false, false, false, false};
 volatile bool send_telemetry = false;
 volatile float shared_roll = 0.0f;
 volatile float shared_pitch = 0.0f;
@@ -201,18 +200,13 @@ int main() {
                     
                     if (is_level && is_throttle_safe) {
                         // Calibrate receiver PWM offsets before arming
-                        fc_buzzer.play_tone(1); // Warning tone during calibration
+                        fc_buzzer.play_tone(1000); // Warning tone during calibration
                         calibrate_receiver(receiver, rc_roll_bias, rc_pitch_bias, rc_yaw_bias);
                         fc_buzzer.stop();
 
                         is_armed = true;
                         fc_buzzer.stop();
                         fc_buzzer.play_melody(Tunes::armed, Tunes::armed_len);
-                        
-                        BlackboxPacket sep;
-                        memset(&sep, 0, sizeof(BlackboxPacket));
-                        sep.dt_us = 0xFFFE;
-                        blackbox.write_packet(sep);
                         
                         last_update_ekf_us = time_us_64();
                     } else {

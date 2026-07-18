@@ -118,6 +118,7 @@
 // =============================================================================
 #define BLACKBOX_RAM_BYTES (256 * 1024)   // 256 KB of RAM
 #define FLASH_TARGET_OFFSET (2048 * 1024) // Save at the 2 MB mark
+#define FLASH_MAX_SIZE (2048 * 1024)      // 2 MB of Flash available for ring buffer
 
 // =============================================================================
 // TELEMETRY (UART — EKF testing only)

@@ -25,7 +25,6 @@ void process_command(char* buffer) {
     if (strncmp(buffer, "EKF,", 4) == 0) {
         sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
         DEBUG_PRINT("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
-        tuning_updates[3] = true;
     }
     // NEW: Roll & Pitch PID
     else if (strncmp(buffer, "PID_RP,", 7) == 0) {
@@ -33,19 +32,16 @@ void process_command(char* buffer) {
         DEBUG_PRINT("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
         pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
         roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-        tuning_updates[0] = true;
     }
     // NEW: Yaw PID
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
         DEBUG_PRINT("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
         yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
-        tuning_updates[1] = true;
     }
     else if (strncmp(buffer, "BIAS,", 5) == 0) {
         sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
         DEBUG_PRINT("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
-        tuning_updates[2] = true;
     }
 }
 
@@ -138,22 +134,18 @@ void core1_entry() {
                         q_gyro = new_q_g;
                         q_bias = new_q_b;
                         r_accel = new_r_a;
-                        tuning_updates[3] = true;
                         DEBUG_PRINT("EKF Updated: %f, %f, %f\n", q_gyro, q_bias, r_accel);
                     }
                 }
 
                 if (rp_changed) {
-                    tuning_updates[0] = true;
                     roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
                     pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
                 }
                 if (yaw_changed) {
-                    tuning_updates[1] = true;
                     yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
                 }
                 if (bias_changed) {
-                    tuning_updates[2] = true;
                     DEBUG_PRINT("Bias Updated: roll: %f, pitch: %f, yaw: %f\n",bias_roll,bias_pitch,bias_yaw);
                 }
 
