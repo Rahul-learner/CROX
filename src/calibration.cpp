@@ -8,22 +8,12 @@
 
 extern volatile bool imu_data_ready;
 
-class IMU {
-public:
-    void mpu6050_read(float& ax, float& ay, float& az, float& gx, float& gy, float& gz) {}
-};
-
-class HMC5883L {
-public:
-    void hmc5883l_read(float& mx, float& my, float& mz) {}
-};
-
 void calibrate_receiver(ReadPWM& receiver, float& rc_roll_bias, float& rc_pitch_bias, float& rc_yaw_bias) {
     float rc_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float raw_rc_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float pwm_sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-    for (int i = 0; i < 10; i++) {
+    float reading_count = 10;
+    for (int i = 0; i < reading_count; i++) {
         receiver.read_pwm(rc_pwm, raw_rc_pwm);
 
 
@@ -35,27 +25,47 @@ void calibrate_receiver(ReadPWM& receiver, float& rc_roll_bias, float& rc_pitch_
         sleep_ms(51);
     }
 
-    rc_roll_bias = pwm_sum[0] / 50.0f;
-    rc_pitch_bias = pwm_sum[1] / 50.0f;
-    rc_yaw_bias = pwm_sum[3] / 50.0f;
+    rc_roll_bias = pwm_sum[0] / reading_count;
+    rc_pitch_bias = pwm_sum[1] / reading_count;
+    rc_yaw_bias = pwm_sum[3] / reading_count;
+
+    DEBUG_PRINT("\n--- RC CALIBRATION COMPLETE! ---\n");
+    DEBUG_PRINT("Roll Bias: %f\n", rc_roll_bias);
+    DEBUG_PRINT("Pitch Bias: %f\n", rc_pitch_bias);
+    DEBUG_PRINT("Yaw Bias: %f\n", rc_yaw_bias);
+    DEBUG_PRINT("\n--- CALIBRATED RC PWM ---\n");
+    DEBUG_PRINT("Roll: %f\n", rc_pwm[0] - rc_roll_bias);
+    DEBUG_PRINT("Pitch: %f\n", rc_pwm[1] - rc_pitch_bias);
+    DEBUG_PRINT("Yaw: %f\n", rc_pwm[3] - rc_yaw_bias);
+    DEBUG_PRINT("--------------------------------\n\n");
 }
 
-void run_noise_calibration(IMU& mpu6050,HMC5883L& hmc5883l, WritePWM& motor) {
+void run_noise_calibration(BMI160& imu, WritePWM& motor) { // <-- Added motor back
     DEBUG_PRINT("\n--- STARTING EKF NOISE CALIBRATION ---\n");
-    DEBUG_PRINT("Keep the drone perfectly still with motors running (NO PROPS!)...\n");
-    motor.update_motors_pwm(1800.0f, 0.0f, 0.0f, 0.0f);
+    DEBUG_PRINT("WARNING: REMOVE PROPELLERS! Spinning motors to measure vibration...\n");
+    
+    // Spin the motors at a hover-like throttle to simulate flight vibrations
+    motor.update_motors_pwm(1500.0f, 0.0f, 0.0f, 0.0f);
+    sleep_ms(2000); // Give the motors 2 seconds to spool up and stabilize
 
-    const int SAMPLES = 1000;
+    const int SAMPLES = 10000;
 
     // Arrays to hold Mean and M2 (Squared distance from mean)
     float a_mean[3] = {0}, a_M2[3] = {0};
-    float m_mean[3] = {0}, m_M2[3] = {0};
+
+    // Discard the first few samples as the sensor settles
+    for(int i=0; i<50; i++) {
+        while (!imu_data_ready) { tight_loop_contents(); }
+        imu_data_ready = false;
+    }
 
     for (int count = 1; count <= SAMPLES; count++) {
-        // 1. READ SENSORS (Replace with your actual read functions)
-        float ax, ay, az, gx, gy, gz, mx, my, mz;
-        mpu6050.mpu6050_read(ax, ay, az, gx, gy, gz);
-        hmc5883l.hmc5883l_read(mx, my, mz);
+        while (!imu_data_ready) { tight_loop_contents(); } // Wait for interrupt
+        imu_data_ready = false;
+
+        // 1. READ SENSORS 
+        float ax, ay, az, gx, gy, gz;
+        imu.readData(&ax, &ay, &az, &gx, &gy, &gz);
 
         // 2. WELFORD'S MATH FOR ACCELEROMETER
         float a_curr[3] = {ax, ay, az};
@@ -65,39 +75,25 @@ void run_noise_calibration(IMU& mpu6050,HMC5883L& hmc5883l, WritePWM& motor) {
             float delta2 = a_curr[i] - a_mean[i];
             a_M2[i] += delta * delta2;
         }
-
-        // 3. WELFORD'S MATH FOR MAGNETOMETER
-        float m_curr[3] = {mx, my, mz};
-        for (int i = 0; i < 3; i++) {
-            float delta = m_curr[i] - m_mean[i];
-            m_mean[i] += delta / count;
-            float delta2 = m_curr[i] - m_mean[i];
-            m_M2[i] += delta * delta2;
-        }
-
-        // Wait 10ms to match your 100Hz flight loop
-        sleep_ms(10);
     }
 
-    // Turn off motor
+    // Turn off the motors immediately after collecting samples!
     motor.reset();
 
     // 4. CALCULATE VARIANCE (This goes straight into your EKF 'R' Matrix)
     // Variance = M2 / (Samples - 1)
-    float a_var[3], m_var[3];
+    float a_var[3];
     for (int i = 0; i < 3; i++) {
         a_var[i] = a_M2[i] / (SAMPLES - 1);
-        m_var[i] = m_M2[i] / (SAMPLES - 1);
     }
 
     // 5. PRINT RESULTS TO TERMINAL
     DEBUG_PRINT("\nCALIBRATION COMPLETE!\n");
     DEBUG_PRINT("Copy these values into your EKF R Matrices:\n");
     DEBUG_PRINT("Accel Variance (R): X: %f, Y: %f, Z: %f\n", a_var[0], a_var[1], a_var[2]);
-    DEBUG_PRINT("Mag Variance (R_mag): X: %f, Y: %f, Z: %f\n", m_var[0], m_var[1], m_var[2]);
     DEBUG_PRINT("--------------------------------------\n\n");
-
 }
+
 
 void calibrate_gyro(BMI160& imu, float& gyro_bias_x, float& gyro_bias_y, float& gyro_bias_z) {
     gyro_bias_x = 0.0f;
