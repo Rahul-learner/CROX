@@ -24,28 +24,27 @@ add_executable(CROX
     src/core/comm_tasks.cpp
     src/core/sitl.cpp
     src/EKF.cpp
-    include/EKF.h
+    src/EKF.h
     src/readIMU.cpp
-    include/readIMU.h
+    src/readIMU.h
     src/readPWM.cpp
-    include/readPWM.h
+    src/readPWM.h
     src/writePWM.cpp
-    include/writePWM.h
+    src/writePWM.h
     src/PID.cpp
-    include/PID.h
+    src/PID.h
     src/PwmIn.pio
     src/buzzer.cpp
-    include/buzzer.h
+    src/buzzer.h
     src/nrf24_radio.cpp
-    include/nrf24_radio.h
-    src/msp_protocol.cpp
-    include/msp_protocol.h
+    src/nrf24_radio.h
     src/telemetry.cpp
-    include/telemetry.h
+    src/telemetry.h
     src/calibration.cpp
-    include/calibration.h
+    src/calibration.h
     src/blackbox.cpp
-    include/blackbox.h
+    src/blackbox.h
+    src/hw_config.c
 )
 
 pico_generate_pio_header(CROX ${CMAKE_CURRENT_LIST_DIR}/src/PwmIn.pio)
@@ -69,14 +68,20 @@ target_link_libraries(CROX
         hardware_spi
         hardware_flash
         hardware_sync
-        m)
+        hardware_dma
+        m
+        FatFs_SPI)
 
 # Add the standard include files to the build
 target_include_directories(CROX PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
-        ${CMAKE_CURRENT_LIST_DIR}/include
+        ${CMAKE_CURRENT_LIST_DIR}/src
+        ${CMAKE_CURRENT_LIST_DIR}/src/core
         ${CMAKE_CURRENT_LIST_DIR}/config
         )
+
+# Add the FatFS subdirectory
+add_subdirectory(lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI)
 # create map/bin/hex/uf2 file in addition to ELF.
 pico_add_extra_outputs(CROX)
 

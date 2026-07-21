@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "readIMU.h"
 #include "config.h"
+#include "math.h"
 
 extern volatile bool imu_data_ready;
 
@@ -91,6 +92,44 @@ void run_noise_calibration(BMI160& imu, WritePWM& motor) { // <-- Added motor ba
     DEBUG_PRINT("\nCALIBRATION COMPLETE!\n");
     DEBUG_PRINT("Copy these values into your EKF R Matrices:\n");
     DEBUG_PRINT("Accel Variance (R): X: %f, Y: %f, Z: %f\n", a_var[0], a_var[1], a_var[2]);
+    DEBUG_PRINT("--------------------------------------\n\n");
+}
+
+
+void calibrate_accel(BMI160& imu, float& accel_bias_roll, float& accel_bias_pitch) {
+    DEBUG_PRINT("\n--- STARTING ACCELEROMETER CALIBRATION ---\n");
+    DEBUG_PRINT("Keep drone still on a flat level surface...\n");
+
+    const int SAMPLES = 1000;
+    float sum_roll = 0.0f;
+    float sum_pitch = 0.0f;
+
+    // Discard the first few samples as the sensor settles
+    for(int i=0; i<50; i++) {
+        while (!imu_data_ready) { tight_loop_contents(); }
+        imu_data_ready = false;
+    }
+
+    for (int count = 0; count < SAMPLES; count++) {
+        while (!imu_data_ready) { tight_loop_contents(); } // Wait for interrupt
+        imu_data_ready = false;
+
+        float ax, ay, az, gx, gy, gz;
+        imu.readData(&ax, &ay, &az, &gx, &gy, &gz);
+        
+        // Calculate raw pitch and roll from accelerometer (in degrees)
+        float accel_pitch = atan2(ay, sqrt(ax * ax + az * az)) * 180.0f / 3.14159265f;
+        float accel_roll = atan2(-ax, az) * 180.0f / 3.14159265f;
+        
+        sum_roll += accel_roll;
+        sum_pitch += accel_pitch;
+    }
+
+    accel_bias_roll = sum_roll / SAMPLES;
+    accel_bias_pitch = sum_pitch / SAMPLES;
+
+    DEBUG_PRINT("\nACCEL CALIBRATION COMPLETE!\n");
+    DEBUG_PRINT("Calculated Bias -> Roll: %f, Pitch: %f\n", accel_bias_roll, accel_bias_pitch);
     DEBUG_PRINT("--------------------------------------\n\n");
 }
 

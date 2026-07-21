@@ -2,17 +2,21 @@
 #include "pico/stdlib.h"
 #include <stdio.h>
 
-extern float pid_p_roll_pitch;
-extern float pid_i_roll_pitch;
-extern float pid_d_roll_pitch;
-extern float pid_p_yaw;
-extern float pid_i_yaw;
-extern float pid_d_yaw;
-extern bool pids_updated_via_msp;
+
+
+uint8_t MSP_Protocol::crc8_dvb_s2(uint8_t crc, const uint8_t a) {
+    crc ^= a;
+    for (size_t i = 0; i < 8; ++i) {
+        if (crc & 0x80) crc = (crc << 1) ^ 0xD5;
+        else crc = crc << 1;
+    }
+    return crc;
+}
 
 void MSP_Protocol::serialize8(uint8_t a) {
     putchar(a);
-    checksum ^= a;
+    if (is_mspv2) checksum2 = crc8_dvb_s2(checksum2, a);
+    else checksum ^= a;
 }
 
 void MSP_Protocol::serialize16(int16_t a) {
@@ -31,55 +35,134 @@ uint8_t MSP_Protocol::read8(uint8_t* payload, uint8_t& idx) {
     return payload[idx++];
 }
 
-uint16_t MSP_Protocol::read16(uint8_t* payload, uint8_t& idx) {
-    uint16_t res = payload[idx++];
+int16_t MSP_Protocol::read16(uint8_t* payload, uint8_t& idx) {
+    int16_t res = payload[idx++];
     res |= (payload[idx++] << 8);
     return res;
 }
 
-void MSP_Protocol::headSerialResponse(uint8_t err, uint8_t s, uint8_t cmd) {
+void MSP_Protocol::headSerialResponse(uint8_t err, uint16_t s, uint16_t cmd) {
     putchar('$');
-    putchar('M');
-    putchar(err ? '!' : '>');
-    checksum = 0;
-    serialize8(s);
-    serialize8(cmd);
+    if (is_mspv2) {
+        putchar('X');
+        putchar(err ? '!' : '>');
+        checksum2 = 0;
+        serialize8(0); // flag
+        serialize8(cmd & 0xFF);
+        serialize8((cmd >> 8) & 0xFF);
+        serialize8(s & 0xFF);
+        serialize8((s >> 8) & 0xFF);
+    } else {
+        putchar('M');
+        putchar(err ? '!' : '>');
+        checksum = 0;
+        serialize8(s);
+        serialize8(cmd);
+    }
 }
 
 void MSP_Protocol::tailSerialReply() {
-    putchar(checksum);
+    if (is_mspv2) putchar(checksum2);
+    else putchar(checksum);
+    fflush(stdout);
 }
 
 void MSP_Protocol::evaluateCommand(float roll_deg, float pitch_deg, float yaw_deg, float ax, float ay, float az, float gx, float gy, float gz) {
     switch (cmd_id) {
         case MSP_API_VERSION:
             headSerialResponse(0, 3, MSP_API_VERSION);
-            serialize8(2);  // MSP Protocol Version
+            serialize8(0);  // MSP Protocol Version
             serialize8(1);  // API Major
-            serialize8(40); // API Minor (4.1 compatible)
+            serialize8(45); // API Minor (4.4 compatible)
             tailSerialReply();
             break;
 
         case MSP_FC_VARIANT:
             headSerialResponse(0, 4, MSP_FC_VARIANT);
-            // "BF  " (Betaflight) tells Configurator to unlock PID tuning
-            putchar('B'); putchar('F'); putchar(' '); putchar(' ');
-            checksum ^= 'B'; checksum ^= 'F'; checksum ^= ' '; checksum ^= ' ';
+            // "BTFL" (Betaflight) tells Configurator to unlock PID tuning
+            putchar('B'); putchar('T'); putchar('F'); putchar('L');
+            checksum ^= 'B'; checksum ^= 'T'; checksum ^= 'F'; checksum ^= 'L';
             tailSerialReply();
             break;
 
         case MSP_FC_VERSION:
             headSerialResponse(0, 3, MSP_FC_VERSION);
-            serialize8(4); serialize8(2); serialize8(0);
+            serialize8(4); serialize8(4); serialize8(0);
             tailSerialReply();
             break;
 
         case MSP_BOARD_INFO:
-            headSerialResponse(0, 9, MSP_BOARD_INFO);
-            for(int i=0; i<4; i++) serialize8('P'); // Board ID "PICO"
-            serialize8(0); serialize8(0); serialize8(0); serialize8(0); serialize8(0);
-        tailSerialReply();
-        break;
+            headSerialResponse(0, 57, MSP_BOARD_INFO);
+            // boardIdentifier (4)
+            serialize8('C'); serialize8('R'); serialize8('O'); serialize8('X');
+            // hardwareRevision (2)
+            serialize16(0);
+            // fcType (1)
+            serialize8(0);
+            // capabilities (1)
+            serialize8(0);
+            // targetNameLength (1)
+            serialize8(4);
+            // targetName (4)
+            serialize8('C'); serialize8('R'); serialize8('O'); serialize8('X');
+            // boardNameLength (1)
+            serialize8(0);
+            // manufacturerNameLength (1)
+            serialize8(0);
+            // signature (32)
+            for(int i=0; i<32; i++) serialize8(0);
+            // mcuTypeId (1)
+            serialize8(255);
+            // configurationState (1)
+            serialize8(2); // configured
+            // sampleRateHz (2)
+            serialize16(1000);
+            // configurationProblems (4)
+            serialize32(0);
+            // spiDeviceCount (1)
+            serialize8(0);
+            // i2cDeviceCount (1)
+            serialize8(0);
+            tailSerialReply();
+            break;
+
+        case MSP_BUILD_INFO:
+            headSerialResponse(0, 30, MSP_BUILD_INFO);
+            for(int i=0; i<11; i++) serialize8('0'); // date
+            for(int i=0; i<8; i++) serialize8('0');  // time
+            for(int i=0; i<11; i++) serialize8('0'); // git revision
+            tailSerialReply();
+            break;
+
+        case MSP_UID:
+            headSerialResponse(0, 12, MSP_UID);
+            serialize32(0x12345678);
+            serialize32(0x87654321);
+            serialize32(0xABCDEF01);
+            tailSerialReply();
+            break;
+
+        case MSP_STATUS_EX:
+        case MSP_STATUS:
+            headSerialResponse(0, 22, cmd_id);
+            serialize16(1000); // cycle time
+            serialize16(0);    // i2c errors
+            serialize16(0);    // sensors
+            serialize32(0);    // mode
+            serialize8(0);     // pid profile
+            serialize16(5);    // cpu load
+            if (cmd_id == MSP_STATUS_EX) {
+                serialize8(1); // max profile count
+                serialize8(0); // current rate profile index
+            } else {
+                serialize16(0); // gyro cycle time
+            }
+            serialize8(0);     // flight mode flags count
+            serialize8(1);     // arming disabled count
+            serialize32(0);    // arming disabled flags
+            serialize8(0);     // reboot required
+            tailSerialReply();
+            break;
 
         case MSP_ATTITUDE:
             // Betaflight expects angles in decidegrees (e.g. 450 = 45.0 degrees)
@@ -89,6 +172,25 @@ void MSP_Protocol::evaluateCommand(float roll_deg, float pitch_deg, float yaw_de
             serialize16((int16_t)(roll_deg * 10.0f));
             serialize16((int16_t)(pitch_deg * 10.0f));
             serialize16((int16_t)(yaw_deg * 10.0f));
+            tailSerialReply();
+            break;
+
+        case MSP_RC:
+            headSerialResponse(0, 32, MSP_RC);
+            for(int i = 0; i < 16; i++) {
+                if (i < 4) serialize16(1500); // AETR center
+                else serialize16(1000); // Aux low
+            }
+            tailSerialReply();
+            break;
+
+        case MSP_ANALOG:
+            headSerialResponse(0, 9, MSP_ANALOG);
+            serialize8(0);  // vbat legacy (0.1V)
+            serialize16(0); // mah drawn
+            serialize16(0); // rssi
+            serialize16(0); // amperage (0.01A)
+            serialize16(0); // vbat (0.01V)
             tailSerialReply();
             break;
 
@@ -176,6 +278,78 @@ void MSP_Protocol::evaluateCommand(float roll_deg, float pitch_deg, float yaw_de
             }
             break;
 
+        case MSP_NAME:
+            headSerialResponse(0, 4, MSP_NAME);
+            serialize8('C'); serialize8('R'); serialize8('O'); serialize8('X');
+            tailSerialReply();
+            break;
+
+        case MSP_BATTERY_CONFIG:
+            headSerialResponse(0, 14, MSP_BATTERY_CONFIG);
+            serialize8(34);  // vbatmincellvoltage
+            serialize8(42);  // vbatmaxcellvoltage
+            serialize8(35);  // vbatwarningcellvoltage
+            serialize16(0);  // batteryCapacity
+            serialize8(0);   // voltageMeterSource
+            serialize8(0);   // currentMeterSource
+            serialize16(340); // vbatmincellvoltage
+            serialize16(420); // vbatmaxcellvoltage
+            serialize16(350); // vbatwarningcellvoltage
+            tailSerialReply();
+            break;
+
+        case MSP_FEATURE_CONFIG:
+            headSerialResponse(0, 4, MSP_FEATURE_CONFIG);
+            serialize32(0);
+            tailSerialReply();
+            break;
+
+        case MSP_MIXER_CONFIG:
+            headSerialResponse(0, 2, MSP_MIXER_CONFIG);
+            serialize8(3); // QUADX
+            serialize8(0); // yaw_motor_direction
+            tailSerialReply();
+            break;
+
+        case MSP_CF_SERIAL_CONFIG:
+            headSerialResponse(0, 7, MSP_CF_SERIAL_CONFIG);
+            serialize8(0);  // id (USB VCP)
+            serialize16(32); // functionMask (MSP)
+            serialize8(0);  // msp_baudrateIndex
+            serialize8(0);  // gps_baudrateIndex
+            serialize8(0);  // telemetry_baudrateIndex
+            serialize8(0);  // blackbox_baudrateIndex
+            tailSerialReply();
+            break;
+
+        case MSP_SENSOR_ALIGNMENT:
+            headSerialResponse(0, 5, MSP_SENSOR_ALIGNMENT);
+            serialize8(1); serialize8(1); serialize8(1); serialize8(1); serialize8(0);
+            tailSerialReply();
+            break;
+
+        case MSP_BOXNAMES: {
+            const char* boxnames = "ARM;ANGLE;";
+            headSerialResponse(0, strlen(boxnames), MSP_BOXNAMES);
+            for(size_t i=0; i<strlen(boxnames); i++) serialize8(boxnames[i]);
+            tailSerialReply();
+            break;
+        }
+
+        case MSP_BOXIDS:
+            headSerialResponse(0, 2, MSP_BOXIDS);
+            serialize8(0); serialize8(1);
+            tailSerialReply();
+            break;
+
+        case MSP_PIDNAMES: {
+            const char* pidnames = "ROLL;PITCH;YAW;ALT;POS;POSR;NAVR;LEVEL;MAG;VEL;";
+            headSerialResponse(0, strlen(pidnames), MSP_PIDNAMES);
+            for(size_t i=0; i<strlen(pidnames); i++) serialize8(pidnames[i]);
+            tailSerialReply();
+            break;
+        }
+
         default:
             // Send an empty error response for unsupported commands
             // This keeps Betaflight happy so it doesn't hang waiting for data.
@@ -196,7 +370,15 @@ void MSP_Protocol::update(float current_roll, float current_pitch, float current
                 if (byte == '$') state = HEADER_START;
                 break;
             case HEADER_START:
-                state = (byte == 'M') ? HEADER_M : IDLE;
+                if (byte == 'M') {
+                    state = HEADER_M;
+                    is_mspv2 = false;
+                } else if (byte == 'X') {
+                    state = HEADER_X;
+                    is_mspv2 = true;
+                } else {
+                    state = IDLE;
+                }
                 break;
             case HEADER_M:
                 if (byte == '<') {
@@ -209,6 +391,20 @@ void MSP_Protocol::update(float current_roll, float current_pitch, float current
                     state = IDLE;
                 }
                 break;
+            case HEADER_X:
+                if (byte == '<') {
+                    state = HEADER_FLAG;
+                    is_error = false;
+                    checksum2 = 0;
+                } else if (byte == '!') {
+                    state = HEADER_FLAG;
+                    is_error = true;
+                    checksum2 = 0;
+                } else {
+                    state = IDLE;
+                }
+                break;
+            // -- MSPv1 --
             case HEADER_ARROW:
                 if (byte > sizeof(payload_buffer)) {
                     state = IDLE; // Payload too large, abort
@@ -222,7 +418,7 @@ void MSP_Protocol::update(float current_roll, float current_pitch, float current
                 cmd_id = byte;
                 checksum ^= byte;
                 payload_index = 0;
-                state = (data_size > 0) ? PAYLOAD : HEADER_CMD; // Skip payload if size is 0
+                state = (data_size > 0) ? PAYLOAD : HEADER_CMD;
                 break;
             case PAYLOAD:
                 payload_buffer[payload_index++] = byte;
@@ -233,7 +429,50 @@ void MSP_Protocol::update(float current_roll, float current_pitch, float current
                 break;
             case HEADER_CMD:
                 if (checksum == byte) {
-                    // Checksum passed! Execute the command.
+                    evaluateCommand(current_roll, current_pitch, current_yaw, ax, ay, az, gx, gy, gz);
+                }
+                state = IDLE;
+                break;
+            // -- MSPv2 --
+            case HEADER_FLAG:
+                checksum2 = crc8_dvb_s2(checksum2, byte); // flag
+                state = HEADER_CMD_V2;
+                payload_index = 0; // use payload_index temporarily for reading 16-bit fields
+                break;
+            case HEADER_CMD_V2:
+                if (payload_index == 0) {
+                    cmd_id = byte;
+                    checksum2 = crc8_dvb_s2(checksum2, byte);
+                    payload_index++;
+                } else {
+                    cmd_id |= (byte << 8);
+                    checksum2 = crc8_dvb_s2(checksum2, byte);
+                    payload_index = 0;
+                    state = HEADER_SIZE_V2;
+                }
+                break;
+            case HEADER_SIZE_V2:
+                if (payload_index == 0) {
+                    data_size = byte;
+                    checksum2 = crc8_dvb_s2(checksum2, byte);
+                    payload_index++;
+                } else {
+                    data_size |= (byte << 8);
+                    checksum2 = crc8_dvb_s2(checksum2, byte);
+                    payload_index = 0;
+                    if (data_size > sizeof(payload_buffer)) state = IDLE;
+                    else state = (data_size > 0) ? PAYLOAD_V2 : CHECKSUM_V2;
+                }
+                break;
+            case PAYLOAD_V2:
+                payload_buffer[payload_index++] = byte;
+                checksum2 = crc8_dvb_s2(checksum2, byte);
+                if (payload_index >= data_size) {
+                    state = CHECKSUM_V2;
+                }
+                break;
+            case CHECKSUM_V2:
+                if (checksum2 == byte) {
                     evaluateCommand(current_roll, current_pitch, current_yaw, ax, ay, az, gx, gy, gz);
                 }
                 state = IDLE;

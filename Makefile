@@ -21,7 +21,7 @@ flash-gs: gs
 	picotool load -xf GroundStation/build_gs/GroundStation.uf2
 
 monitor:
-	./scripts/.venv/bin/python scripts/debug.py --port /dev/ttyACM0 --baud 115200
+	cd configurator && cargo run --release
 
 plot:
 	./scripts/.venv/bin/python scripts/read_blackbox_and_plot.py

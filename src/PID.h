@@ -22,6 +22,10 @@ public:
     float compute(float setpoint, float measured_value, float dt);
 
     void set_pid(float p, float i, float d);
+    
+    // Setters for dynamic tuning
+    void set_integral_limit(float limit) { integral_limit = limit; }
+    void set_d_cutoff_hz(float hz) { d_cutoff_hz = hz; }
 
     // Call this immediately upon arming the motors
     void reset();

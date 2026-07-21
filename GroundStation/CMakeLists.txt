@@ -33,6 +33,7 @@ target_include_directories(GroundStation PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
     ../include
     ../config
+    ../src
 )
 
 pico_add_extra_outputs(GroundStation)

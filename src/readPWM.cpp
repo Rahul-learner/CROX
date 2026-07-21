@@ -5,17 +5,7 @@ float ReadPWM::map_value(float x, float in_min, float in_max, float out_min, flo
 }
 
 // --- NEW: Map with Deadband ---
-float ReadPWM::map_with_deadband(float pulse_us) {
-    if (pulse_us > (RC_CENTER_US + DEADBAND_US)) {
-        // Map upper half: 1508->2000 smoothly mapped to 0.0->30.0
-        return map_value(pulse_us, RC_CENTER_US + DEADBAND_US, 2000.0f, 0.0f, CONTROL_OUT_MAX);
-    } else if (pulse_us < (RC_CENTER_US - DEADBAND_US)) {
-        // Map lower half: 1000->1492 smoothly mapped to -30.0->0.0
-        return map_value(pulse_us, 1000.0f, RC_CENTER_US - DEADBAND_US, CONTROL_OUT_MIN, 0.0f);
-    }
-    // Inside deadband: Lock exactly to 0.0
-    return 0.0f;
-}
+// Moved to main.cpp
 
 float ReadPWM::ticks_to_us(uint32_t delta_ticks) {
     // Each tick is 1 cycle at 125MHz = 8ns
@@ -53,22 +43,10 @@ void ReadPWM::read_pwm(float (&channel)[4], float (&raw_channel)[4]) {
             float period_us = ticks_to_us(period_ticks);
             
             raw_channel[i] = period_us;
-
-            if (i == 2) {
-                // Throttle stays as raw microseconds
-                channel[i] = period_us;
-            } else {
-                // Roll, Pitch, and Yaw get deadband mapping
-                channel[i] = map_with_deadband(period_us);
-            }
+            channel[i] = period_us; // Raw values pass through, main.cpp handles mapping
         } else {
             raw_channel[i] = (float)initial_channel[i];
-            
-            if (i == 2) {
-                channel[i] = (float)initial_channel[i];
-            } else {
-                channel[i] = map_with_deadband((float)initial_channel[i]);
-            }
+            channel[i] = (float)initial_channel[i];
         }
     }
 }

@@ -48,10 +48,12 @@ bool init_hardware() {
         hardware_ok = false;
     }
 
+#if USE_NRF24_RADIO
     if (!radio.checkConnection()) {
         DEBUG_PRINT("CRITICAL ERROR: NRF24 not found!\n");
         hardware_ok = false;
     }
+#endif
 
     if (!hardware_ok) {
         while (true) {
@@ -62,9 +64,11 @@ bool init_hardware() {
 
     DEBUG_PRINT("All hardware detected! Initializing...\n");
     imu.init();
+#if USE_NRF24_RADIO
     radio.init();
     radio.setAddresses(drone_tx_addr, drone_rx_addr);
     radio.startListening();
+#endif
 
     DEBUG_PRINT("Launching Core 1 for Telemetry...\n");
     multicore_launch_core1(core1_entry);

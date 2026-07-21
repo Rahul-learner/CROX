@@ -28,23 +28,19 @@ struct TelemetryPacket {
     uint8_t checksum;
 };
 
-struct PIDTuningPacket {
-    uint8_t header1;
-    uint8_t header2;
-    uint8_t update_mask; // 0x01=PID_RP, 0x02=PID_YAW, 0x04=BIAS, 0x08=EKF
-    int16_t kp_roll_pitch;
-    int16_t ki_roll_pitch;
-    int16_t kd_roll_pitch;
-    int16_t kp_yaw;
-    int16_t ki_yaw;
-    int16_t kd_yaw;
-    int16_t bias_roll;
-    int16_t bias_pitch;
-    int16_t bias_yaw;
-    int16_t q_gyro;      // Scaled by 100,000
-    int16_t q_bias;      // Scaled by 1,000,000
-    int16_t r_accel;     // Scaled by 100
-    uint8_t reserved[4]; // Pad to 32 bytes
+struct RadioCommandPacket {
+    uint8_t header1;     // 0xCC
+    uint8_t header2;     // 0xDD
+    uint8_t cmd_id;
+    uint8_t payload[28];
+    uint8_t checksum;
+};
+
+struct RadioResponsePacket {
+    uint8_t header1;     // 0xDD
+    uint8_t header2;     // 0xCC
+    uint8_t cmd_id;
+    uint8_t payload[28];
     uint8_t checksum;
 };
 
@@ -104,13 +100,15 @@ public:
     // ==========================================================
 
     bool sendTelemetry(TelemetryPacket* data);
-    bool readPID(PIDTuningPacket* data);
+    bool readCommand(RadioCommandPacket* data);
+    bool sendResponse(RadioResponsePacket* data);
 
     // ==========================================================
     // GROUND STATION FUNCTIONS (Ground -> Drone)
     // ==========================================================
 
-    bool sendPID(PIDTuningPacket* data);
+    bool sendCommand(RadioCommandPacket* data);
+    bool readResponse(RadioResponsePacket* data);
     bool readTelemetry(TelemetryPacket* data);
 };
 

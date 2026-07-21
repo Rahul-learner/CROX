@@ -214,7 +214,7 @@ bool NRF24::sendTelemetry(TelemetryPacket* data) {
     return (status & 0x20) != 0;
 }
 
-bool NRF24::readPID(PIDTuningPacket* data) {
+bool NRF24::readCommand(RadioCommandPacket* data) {
     uint8_t buffer[32] = {0};
 
     csn_low();
@@ -223,21 +223,20 @@ bool NRF24::readPID(PIDTuningPacket* data) {
     spi_read_blocking(spi, 0x00, buffer, 32);
     csn_high();
 
-    memcpy(data, buffer, sizeof(PIDTuningPacket));
+    memcpy(data, buffer, sizeof(RadioCommandPacket));
 
     // --- AUTO-RECOVERY FIX ---
-    // If headers mismatch, the clone shifted the pointers. Flush the buffer instantly!
-    if (data->header1 != PID_HEADER_1 || data->header2 != PID_HEADER_2) {
+    if (data->header1 != CMD_HEADER_1 || data->header2 != CMD_HEADER_2) {
         writeCmd(FLUSH_RX);
         return false;
     }
 
     uint8_t calc_cs = 0;
     uint8_t* ptr = (uint8_t*)data;
-    for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
+    for (size_t i = 0; i < sizeof(RadioCommandPacket) - 1; i++) calc_cs ^= ptr[i];
 
     if (calc_cs != data->checksum) {
-        DEBUG_PRINT("[NRF24 ERROR] PID Checksum Mismatch!\n");
+        DEBUG_PRINT("[NRF24 ERROR] Command Checksum Mismatch!\n");
         writeCmd(FLUSH_RX); // Flush to be safe
         return false;
     }
@@ -245,22 +244,68 @@ bool NRF24::readPID(PIDTuningPacket* data) {
     return true;
 }
 
+bool NRF24::sendResponse(RadioResponsePacket* data) {
+    if (!isReady()) return false;
+
+    data->header1 = RESP_HEADER_1;
+    data->header2 = RESP_HEADER_2;
+
+    uint8_t calc_cs = 0;
+    uint8_t* ptr = (uint8_t*)data;
+    for (size_t i = 0; i < sizeof(RadioResponsePacket) - 1; i++) calc_cs ^= ptr[i];
+    data->checksum = calc_cs;
+
+    stopListening();
+    _is_sending = true;
+
+    // Temporarily drop retries for responses to not block
+    uint8_t retr_bak = readReg(SETUP_RETR);
+    writeReg(SETUP_RETR, 0x00);
+
+    csn_low();
+    uint8_t cmd = TX_PAYLOAD;
+    spi_write_blocking(spi, &cmd, 1);
+    spi_write_blocking(spi, (uint8_t*)data, 32);
+    csn_high();
+
+    ce_high();
+
+    uint32_t start_time = time_us_32();
+    uint8_t status = 0;
+    while (true) {
+        status = readReg(STATUS);
+        if (status & 0x30) break;
+        if (time_us_32() - start_time > 5000) break;
+    }
+
+    ce_low();
+
+    writeReg(STATUS, 0x30);
+    if (status & 0x10) writeCmd(FLUSH_TX);
+
+    writeReg(SETUP_RETR, retr_bak);
+    startListening();
+
+    _is_sending = false;
+    return (status & 0x20) != 0;
+}
+
 // ==========================================================
 // GROUND STATION FUNCTIONS (Ground -> Drone)
 // ==========================================================
 
-bool NRF24::sendPID(PIDTuningPacket* data) {
+bool NRF24::sendCommand(RadioCommandPacket* data) {
     if (!isReady()) {
-        DEBUG_PRINT("[NRF24 ERROR] Radio busy, skipping PID packet\n");
+        DEBUG_PRINT("[NRF24 ERROR] Radio busy, skipping command packet\n");
         return false;
     }
 
-    data->header1 = PID_HEADER_1;
-    data->header2 = PID_HEADER_2;
+    data->header1 = CMD_HEADER_1;
+    data->header2 = CMD_HEADER_2;
 
     uint8_t calc_cs = 0;
     uint8_t* ptr = (uint8_t*)data;
-    for (size_t i = 0; i < sizeof(PIDTuningPacket) - 1; i++) calc_cs ^= ptr[i];
+    for (size_t i = 0; i < sizeof(RadioCommandPacket) - 1; i++) calc_cs ^= ptr[i];
     data->checksum = calc_cs;
 
     stopListening();
@@ -291,7 +336,7 @@ bool NRF24::sendPID(PIDTuningPacket* data) {
     writeReg(STATUS, 0x30);
 
     if (status & 0x10) {
-        DEBUG_PRINT("[NRF24 ERROR] PID TX MAX_RT (Max Retries) hit! Drone offline.\n");
+        DEBUG_PRINT("[NRF24 ERROR] Command TX MAX_RT (Max Retries) hit! Drone offline.\n");
         writeCmd(FLUSH_TX);
     }
 
@@ -299,6 +344,34 @@ bool NRF24::sendPID(PIDTuningPacket* data) {
     _is_sending = false;
 
     return (status & 0x20) != 0;
+}
+
+bool NRF24::readResponse(RadioResponsePacket* data) {
+    uint8_t buffer[32] = {0};
+
+    csn_low();
+    uint8_t cmd = RX_PAYLOAD;
+    spi_write_blocking(spi, &cmd, 1);
+    spi_read_blocking(spi, 0x00, buffer, 32);
+    csn_high();
+
+    memcpy(data, buffer, sizeof(RadioResponsePacket));
+
+    if (data->header1 != RESP_HEADER_1 || data->header2 != RESP_HEADER_2) {
+        writeCmd(FLUSH_RX);
+        return false;
+    }
+
+    uint8_t calc_cs = 0;
+    uint8_t* ptr = (uint8_t*)data;
+    for (size_t i = 0; i < sizeof(RadioResponsePacket) - 1; i++) calc_cs ^= ptr[i];
+
+    if (calc_cs != data->checksum) {
+        writeCmd(FLUSH_RX);
+        return false;
+    }
+
+    return true;
 }
 
 bool NRF24::readTelemetry(TelemetryPacket* data) {

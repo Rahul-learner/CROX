@@ -10,27 +10,40 @@
 
 #pragma pack(push, 1) // Prevent memory padding
 struct BlackboxPacket {
-  int16_t roll;     // degrees * 100
-  int16_t pitch;    // degrees * 100
-  int16_t yaw_rate; // degrees/sec * 10
-  int16_t pid_roll;
-  int16_t pid_pitch;
-  int16_t pid_yaw;
-  int16_t rc_roll; // 1000 - 2000
-  int16_t rc_pitch;
-  int16_t rc_yaw;
+  uint32_t loop_iteration; // Increments every main loop iteration
+  uint32_t dt_us;          // Loop time delta (us) since last iteration
+  
+  int32_t setpoint_roll;   // deg/s (acro) or deg (angle) * 100
+  int32_t setpoint_pitch;  // deg/s (acro) or deg (angle) * 100
+  int32_t setpoint_yaw;    // deg/s * 100
+  
+  int32_t roll;            // degrees * 100
+  int32_t pitch;           // degrees * 100
+  int32_t yaw_rate;        // degrees/sec * 100 (changed from 10 to 100 for consistency)
+  
+  // Raw sensors
+  int32_t gyro_x;
+  int32_t gyro_y;
+  int32_t gyro_z;
+  int32_t accel_x;
+  int32_t accel_y;
+  int32_t accel_z;
+  
+  int32_t pid_roll;
+  int32_t pid_pitch;
+  int32_t pid_yaw;
+  int32_t rc_roll;      // 1000 - 2000
+  int32_t rc_pitch;
+  int32_t rc_yaw;
   uint16_t rc_throttle; // 1000 - 2000
   uint16_t motor1;      // 1000 - 2000
   uint16_t motor2;
   uint16_t motor3;
   uint16_t motor4;
-  uint16_t dt_us; // Loop time
 };
 #pragma pack(pop)
 
-// Calculate exactly how many packets fit into 256KB
-// With a 22-byte packet, this holds ~11,915 packets! (Almost 10 minutes at
-// 20Hz)
+// Calculate exactly how many packets fit into 256KB for flash backup
 #define MAX_BLACKBOX_PACKETS (BLACKBOX_RAM_BYTES / sizeof(BlackboxPacket))
 
 class Blackbox {
@@ -40,15 +53,25 @@ public:
   // Pass a fully formed struct, not raw bytes
   void write_packet(const BlackboxPacket &packet);
 
-  // Burn to flash (Call ONLY when disarmed)
+  // Core 1 SD Logging Thread
+  void sd_logging_task();
+
+  // Burn to flash (Call ONLY when disarmed, if SD is not used)
   void write_blackbox_to_flash();
 
   // Dump to USB in chronological order
   void dump_flash_to_usb();
 
-  void clear_blackbox_data();
+  void send_to_usb();
 
+  void clear_blackbox_data();
+  
+  // Helper for configurator download
+  void send_binary_info();
+  
 private:
+  void write_betaflight_header();
+
   BlackboxPacket *packet_buffer;
   size_t head;  // Where we write the next packet in RAM
   size_t tail;  // Where the oldest valid packet is in RAM
@@ -57,6 +80,8 @@ private:
   // Flash Ring Buffer Tracking
   uint32_t flash_write_offset; // Byte offset into FLASH_MAX_SIZE where next packet will be written
   uint32_t flash_read_offset;  // Byte offset into FLASH_MAX_SIZE where the oldest valid packet is
+  
+  bool sd_initialized;
 };
 
 #endif // BLACKBOX_H

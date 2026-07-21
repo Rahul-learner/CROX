@@ -3,7 +3,7 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
-#include "nrf24_radio.h" // Fixed include (it is nrf24_radio.h in your project)
+#include "nrf24_radio.h"
 
 // --- NRF24 Hardware Pin Definitions ---
 #define NRF_SPI_PORT spi1
@@ -15,47 +15,281 @@
 
 NRF24 radio(NRF_SPI_PORT, NRF_CE_PIN, NRF_CSN_PIN, NRF_SCK_PIN, NRF_MOSI_PIN, NRF_MISO_PIN);
 
-// --- Tuning Variables & Flags ---
-// Defaults match those in DroneFC/RP2350/config/config.h
-float bias_roll = -3.95f, bias_pitch = 1.87f, bias_yaw = 0.0f;
-float q_gyro = 0.001f, q_bias = 0.00001f, r_accel = 20.0f;
-float pid_p_roll_pitch = 1.95f, pid_i_roll_pitch = 0.15f, pid_d_roll_pitch = 0.47f;
-float pid_p_yaw = 2.1f, pid_i_yaw = 0.1f, pid_d_yaw = 0.0f;
-bool send_tuning_flag = false;
-uint8_t send_tuning_mask = 0;
 bool radio_restarted = false;
+bool send_telemetry = false;
 
-// ============================================================================
-// USB SERIAL COMMAND PARSING
-// ============================================================================
+// Helper to convert float to bytes
+void pack_float(uint8_t* dest, float val) {
+    memcpy(dest, &val, 4);
+}
+float unpack_float(uint8_t* src) {
+    float val;
+    memcpy(&val, src, 4);
+    return val;
+}
 
-// Parse the received usb string
-void process_command(char* buffer) {
-    if (strncmp(buffer, "EKF,", 4) == 0) {
-        sscanf(buffer, "EKF,%f,%f,%f", &q_gyro, &q_bias, &r_accel);
-        printf("ACK EKF: %f, %f, %f\n", q_gyro, q_bias, r_accel);
-        send_tuning_mask |= 0x08;
-        send_tuning_flag = true;
+// Translates a USB string command into a RadioCommandPacket, sends it, and prints the response.
+void process_command_and_bridge(char* buffer) {
+    RadioCommandPacket cmd = {0};
+    cmd.header1 = CMD_HEADER_1;
+    cmd.header2 = CMD_HEADER_2;
+    
+    // Parse the command string to cmd_id and payload
+    if (strncmp(buffer, "GET_ATTITUDE", 12) == 0) {
+        cmd.cmd_id = 0x01;
+    } else if (strncmp(buffer, "GET_PID_ACRO_RP", 15) == 0) {
+        cmd.cmd_id = 0x02;
+    } else if (strncmp(buffer, "SET_PID_ACRO_RP,", 16) == 0) {
+        cmd.cmd_id = 0x03;
+        float p, i, d;
+        sscanf(buffer, "SET_PID_ACRO_RP,%f,%f,%f", &p, &i, &d);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(p * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(i * 1000.0f);
+        ((int16_t*)cmd.payload)[2] = (int16_t)(d * 1000.0f);
+    } else if (strncmp(buffer, "GET_PID_ANGLE_RP", 16) == 0) {
+        cmd.cmd_id = 0x04;
+    } else if (strncmp(buffer, "SET_PID_ANGLE_RP,", 17) == 0) {
+        cmd.cmd_id = 0x05;
+        float p, i, d;
+        sscanf(buffer, "SET_PID_ANGLE_RP,%f,%f,%f", &p, &i, &d);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(p * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(i * 1000.0f);
+        ((int16_t*)cmd.payload)[2] = (int16_t)(d * 1000.0f);
+    } else if (strncmp(buffer, "GET_PID_YAW", 11) == 0) {
+        cmd.cmd_id = 0x06;
+    } else if (strncmp(buffer, "SET_PID_YAW,", 12) == 0) {
+        cmd.cmd_id = 0x07;
+        float p, i, d;
+        sscanf(buffer, "SET_PID_YAW,%f,%f,%f", &p, &i, &d);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(p * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(i * 1000.0f);
+        ((int16_t*)cmd.payload)[2] = (int16_t)(d * 1000.0f);
+    } else if (strncmp(buffer, "GET_EKF", 7) == 0) {
+        cmd.cmd_id = 0x08;
+    } else if (strncmp(buffer, "SET_EKF,", 8) == 0) {
+        cmd.cmd_id = 0x09;
+        float qg, qb, ra;
+        sscanf(buffer, "SET_EKF,%f,%f,%f", &qg, &qb, &ra);
+        ((int32_t*)cmd.payload)[0] = (int32_t)(qg * 1e6f);
+        ((int32_t*)cmd.payload)[1] = (int32_t)(qb * 1e6f);
+        ((int32_t*)cmd.payload)[2] = (int32_t)(ra * 1e6f);
+    } else if (strncmp(buffer, "GET_BIAS", 8) == 0) {
+        cmd.cmd_id = 0x0A;
+    } else if (strncmp(buffer, "SET_BIAS,", 9) == 0) {
+        cmd.cmd_id = 0x0B;
+        float r, p, y;
+        sscanf(buffer, "SET_BIAS,%f,%f,%f", &r, &p, &y);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(r * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(p * 1000.0f);
+        ((int16_t*)cmd.payload)[2] = (int16_t)(y * 1000.0f);
+    } else if (strncmp(buffer, "GET_RC_TUNE", 11) == 0) {
+        cmd.cmd_id = 0x0C;
+    } else if (strncmp(buffer, "SET_RC_TUNE,", 12) == 0) {
+        cmd.cmd_id = 0x0D;
+        float expo, db, ydb, rc, pc, yc;
+        int rr, pr, yr;
+        sscanf(buffer, "SET_RC_TUNE,%f,%f,%f,%f,%f,%f,%d,%d,%d", &expo, &db, &ydb, &rc, &pc, &yc, &rr, &pr, &yr);
+        pack_float(cmd.payload, expo);
+        pack_float(cmd.payload + 4, db);
+        pack_float(cmd.payload + 8, ydb);
+        pack_float(cmd.payload + 12, rc);
+        pack_float(cmd.payload + 16, pc);
+        pack_float(cmd.payload + 20, yc);
+        cmd.payload[24] = rr > 0 ? 1 : 0;
+        cmd.payload[25] = pr > 0 ? 1 : 0;
+        cmd.payload[26] = yr > 0 ? 1 : 0;
+    } else if (strncmp(buffer, "GET_RC", 6) == 0) {
+        cmd.cmd_id = 0x0E;
+    } else if (strncmp(buffer, "GET_STATUS", 10) == 0) {
+        cmd.cmd_id = 0x0F;
+    } else if (strncmp(buffer, "GET_IMU", 7) == 0) {
+        cmd.cmd_id = 0x10;
+    } else if (strncmp(buffer, "SET_MODE,", 9) == 0) {
+        cmd.cmd_id = 0x11;
+        if (strncmp(buffer + 9, "ACRO", 4) == 0) cmd.payload[0] = 1;
+        else if (strncmp(buffer + 9, "ANGLE", 5) == 0) cmd.payload[0] = 0;
+    } else if (strncmp(buffer, "GET_MOTORS", 10) == 0) {
+        cmd.cmd_id = 0x12;
+    } else if (strncmp(buffer, "GET_FF", 6) == 0) {
+        cmd.cmd_id = 0x14;
+    } else if (strncmp(buffer, "SET_FF,", 7) == 0) {
+        cmd.cmd_id = 0x15;
+        float r, p, y;
+        sscanf(buffer, "SET_FF,%f,%f,%f", &r, &p, &y);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(r * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(p * 1000.0f);
+        ((int16_t*)cmd.payload)[2] = (int16_t)(y * 1000.0f);
+    } else if (strncmp(buffer, "GET_TPA", 7) == 0) {
+        cmd.cmd_id = 0x16;
+    } else if (strncmp(buffer, "SET_TPA,", 8) == 0) {
+        cmd.cmd_id = 0x17;
+        float bp, f;
+        sscanf(buffer, "SET_TPA,%f,%f", &bp, &f);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(bp * 1000.0f);
+        ((int16_t*)cmd.payload)[1] = (int16_t)(f * 1000.0f);
+    } else if (strncmp(buffer, "GET_I_LIMIT", 11) == 0) {
+        cmd.cmd_id = 0x18;
+    } else if (strncmp(buffer, "SET_I_LIMIT,", 12) == 0) {
+        cmd.cmd_id = 0x19;
+        float l;
+        sscanf(buffer, "SET_I_LIMIT,%f", &l);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(l * 100.0f);
+    } else if (strncmp(buffer, "GET_D_CUTOFF", 12) == 0) {
+        cmd.cmd_id = 0x1A;
+    } else if (strncmp(buffer, "SET_D_CUTOFF,", 13) == 0) {
+        cmd.cmd_id = 0x1B;
+        float f;
+        sscanf(buffer, "SET_D_CUTOFF,%f", &f);
+        ((int16_t*)cmd.payload)[0] = (int16_t)(f * 100.0f);
+    } else if (strncmp(buffer, "CALIBRATE_ACCEL", 15) == 0) {
+        cmd.cmd_id = 0x1C;
+    } else if (strncmp(buffer, "CALIBRATE_NOISE", 15) == 0) {
+        cmd.cmd_id = 0x1D;
+    } else if (strncmp(buffer, "REBOOT", 6) == 0) {
+        cmd.cmd_id = 0x1E;
+    } else if (strncmp(buffer, "GET_CONFIG", 10) == 0) {
+        // Special case: configurator uses this for auto-detection
+        printf("DEVICE_TYPE,GROUNDSTATION\n");
+        return;
+    } else if (strncmp(buffer, "START_TELEMETRY", 15) == 0) {
+        cmd.cmd_id = 0xF0;
+        send_telemetry = true;
+    } else if (strncmp(buffer, "STOP_TELEMETRY", 14) == 0) {
+        cmd.cmd_id = 0xF1;
+        send_telemetry = false;
+    } else {
+        // Unknown command or not supported over radio (e.g. MOTOR_TEST)
+        return;
     }
-    // NEW: Roll & Pitch PID
-    else if (strncmp(buffer, "PID_RP,", 7) == 0) {
-        sscanf(buffer, "PID_RP,%f,%f,%f", &pid_p_roll_pitch, &pid_i_roll_pitch, &pid_d_roll_pitch); // Replace with your variables
-        printf("ACK PID_RP: %f, %f, %f\n", pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-        send_tuning_mask |= 0x01;
-        send_tuning_flag = true;
+
+    // Transmit over radio
+    if (!radio.sendCommand(&cmd)) {
+        return;
     }
-    // NEW: Yaw PID
-    else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
-        sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw); // Replace with your yaw variables
-        printf("ACK PID_YAW: %f, %f, %f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
-        send_tuning_mask |= 0x02;
-        send_tuning_flag = true;
+
+    // Wait for response up to 200ms
+    uint32_t start_time = time_us_32();
+    RadioResponsePacket resp = {};
+    bool got_resp = false;
+
+    while (time_us_32() - start_time < 200000) {
+        if (radio.dataAvailable()) {
+            if (radio.readResponse(&resp)) {
+                got_resp = true;
+                break;
+            }
+        }
     }
-    else if (strncmp(buffer, "BIAS,", 5) == 0) {
-        sscanf(buffer, "BIAS,%f,%f,%f", &bias_roll, &bias_pitch, &bias_yaw);
-        printf("ACK BIAS: R:%f, P:%f, Y:%f\n", bias_roll, bias_pitch, bias_yaw);
-        send_tuning_mask |= 0x04;
-        send_tuning_flag = true;
+
+    if (!got_resp) {
+        return;
+    }
+
+    // Translate response back to USB text
+    int16_t* i16_p = (int16_t*)resp.payload;
+    int32_t* i32_p = (int32_t*)resp.payload;
+    uint16_t* u16_p = (uint16_t*)resp.payload;
+
+    switch (resp.cmd_id) {
+        case 0x01: // GET_ATTITUDE
+            printf("ATTITUDE,%f,%f,%f\n", i16_p[0]/100.0f, i16_p[1]/100.0f, i16_p[2]/100.0f);
+            break;
+        case 0x02: // GET_PID_ACRO_RP
+            printf("PID_ACRO_RP,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
+            break;
+        case 0x03: // SET_PID_ACRO_RP
+            printf("ACK PID_ACRO_RP\n");
+            break;
+        case 0x04: // GET_PID_ANGLE_RP
+            printf("PID_ANGLE_RP,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
+            break;
+        case 0x05: // SET_PID_ANGLE_RP
+            printf("ACK PID_ANGLE_RP\n");
+            break;
+        case 0x06: // GET_PID_YAW
+            printf("PID_YAW,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
+            break;
+        case 0x07: // SET_PID_YAW
+            printf("ACK PID_YAW\n");
+            break;
+        case 0x08: // GET_EKF
+            printf("EKF,%f,%f,%f\n", i32_p[0]/1e6f, i32_p[1]/1e6f, i32_p[2]/1e6f);
+            break;
+        case 0x09: // SET_EKF
+            printf("ACK EKF\n");
+            break;
+        case 0x0A: // GET_BIAS
+            printf("BIAS,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
+            break;
+        case 0x0B: // SET_BIAS
+            printf("ACK BIAS\n");
+            break;
+        case 0x0C: // GET_RC_TUNE
+            printf("RC_TUNE,%f,%f,%f,%f,%f,%f,%d,%d,%d\n",
+                   unpack_float(resp.payload), unpack_float(resp.payload+4), unpack_float(resp.payload+8),
+                   unpack_float(resp.payload+12), unpack_float(resp.payload+16), unpack_float(resp.payload+20),
+                   resp.payload[24], resp.payload[25], resp.payload[26]);
+            break;
+        case 0x0D: // SET_RC_TUNE
+            printf("ACK RC_TUNE\n");
+            break;
+        case 0x0E: // GET_RC
+            printf("RC,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                   i16_p[0], i16_p[1], i16_p[2], i16_p[3], i16_p[4], i16_p[5], i16_p[6], i16_p[7]);
+            break;
+        case 0x0F: // GET_STATUS
+            printf("STATUS,%d,%d,%u,0\n", resp.payload[0], resp.payload[1], u16_p[1]);
+            break;
+        case 0x10: // GET_IMU
+            printf("IMU,%f,%f,%f,%f,%f,%f\n",
+                   i16_p[0]/100.0f, i16_p[1]/100.0f, i16_p[2]/100.0f,
+                   i16_p[3]/100.0f, i16_p[4]/100.0f, i16_p[5]/100.0f);
+            break;
+        case 0x11: // SET_MODE
+            printf("ACK MODE\n");
+            break;
+        case 0x12: // GET_MOTORS
+            printf("MOTORS,%u,%u,%u,%u\n", u16_p[0], u16_p[1], u16_p[2], u16_p[3]);
+            break;
+        case 0x14: // GET_FF
+            printf("FF,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
+            break;
+        case 0x15: // SET_FF
+            printf("ACK FF\n");
+            break;
+        case 0x16: // GET_TPA
+            printf("TPA,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f);
+            break;
+        case 0x17: // SET_TPA
+            printf("ACK TPA\n");
+            break;
+        case 0x18: // GET_I_LIMIT
+            printf("I_LIMIT,%f\n", i16_p[0]/100.0f);
+            break;
+        case 0x19: // SET_I_LIMIT
+            printf("ACK I_LIMIT\n");
+            break;
+        case 0x1A: // GET_D_CUTOFF
+            printf("D_CUTOFF,%f\n", i16_p[0]/100.0f);
+            break;
+        case 0x1B: // SET_D_CUTOFF
+            printf("ACK D_CUTOFF\n");
+            break;
+        case 0x1C: // CALIBRATE_ACCEL
+            printf("ACK CALIBRATE_ACCEL\n");
+            break;
+        case 0x1D: // CALIBRATE_NOISE
+            printf("ACK CALIBRATE_NOISE\n");
+            break;
+        case 0x1E: // REBOOT
+            printf("ACK REBOOT\n");
+            break;
+        case 0xF0: // START_TELEMETRY
+            printf("ACK START_TELEMETRY\n");
+            break;
+        case 0xF1: // STOP_TELEMETRY
+            printf("ACK STOP_TELEMETRY\n");
+            break;
     }
 }
 
@@ -70,7 +304,7 @@ void check_serial_commands() {
         if (c == '\n' || c == '\r') {
             if (rx_index > 0) {
                 rx_buffer[rx_index] = '\0'; // Terminate string
-                process_command(rx_buffer); // Parse it
+                process_command_and_bridge(rx_buffer); // Parse it
                 rx_index = 0;               // Reset for next command
             }
         } else if (rx_index < sizeof(rx_buffer) - 1) {
@@ -89,16 +323,11 @@ int main() {
     // Give your PC extra time to recognize the USB COM port before printing
     sleep_ms(3000);
 
-    printf("\n======================================\n");
-    printf("   GROUND STATION BOOTING (RX)        \n");
-    printf("======================================\n");
-
     // 1. Verify SPI Hardware Connection
     while (!radio.checkConnection()) {
         printf("ERROR: NRF24 not responding! Check SPI wiring.\n");
         sleep_ms(2000);
     }
-    printf("NRF24 Hardware Verified Successfully!\n");
 
     radio.init();
 
@@ -108,94 +337,37 @@ int main() {
 
     // Ground Station Transmits TO Drone, Receives AS Ground
     radio.setAddresses(drone_addr, ground_addr);
-
     radio.startListening();
 
-    printf("Ground Station Online. Listening for live Telemetry...\n");
-    printf("Type 'PID,1.5,0.05,0.2' and press Enter to send tuning data.\n\n");
-
     TelemetryPacket incoming_telemetry = {};
-    PIDTuningPacket outgoing_pids = {};
     uint32_t last_heartbeat = time_us_32();
-    float last_dt_s = 0.0f;
-
 
     while (true) {
-        // 1. Check for user typing in the Serial Console
+        // 1. Check for user typing in the Serial Console (transparent bridge)
         check_serial_commands();
 
-        // 2. If user updated the PIDs, send them to the drone!
-        if (send_tuning_flag) {
-            radio_restarted = false;
-            // Pack the floats into 16-bit integers (* 1000)
-            int16_t p_roll_pitch = (int16_t)(pid_p_roll_pitch * 1000.0f);
-            int16_t i_roll_pitch = (int16_t)(pid_i_roll_pitch * 1000.0f);
-            int16_t d_roll_pitch = (int16_t)(pid_d_roll_pitch * 1000.0f);
-            int16_t p_yaw = (int16_t)(pid_p_yaw * 1000.0f);
-            int16_t i_yaw = (int16_t)(pid_i_yaw * 1000.0f);
-            int16_t d_yaw = (int16_t)(pid_d_yaw * 1000.0f);
-            int16_t bias_roll_rec = (int16_t)(bias_roll * 1000.0f);
-            int16_t bias_pitch_rec = (int16_t)(bias_pitch * 1000.0f);
-            int16_t bias_yaw_rec = (int16_t)(bias_yaw * 1000.0f);
-            int16_t ekf_q_gyro = (int16_t)(q_gyro * 100000.0f);
-            int16_t ekf_q_bias = (int16_t)(q_bias * 1000000.0f);
-            int16_t ekf_r_accel = (int16_t)(r_accel * 100.0f);
-
-            // Apply to all axes (or you can separate them in your command string later)
-            outgoing_pids.update_mask = send_tuning_mask;
-            outgoing_pids.kp_roll_pitch = p_roll_pitch; outgoing_pids.ki_roll_pitch = i_roll_pitch; outgoing_pids.kd_roll_pitch = d_roll_pitch;
-            outgoing_pids.kp_yaw = p_yaw; outgoing_pids.ki_yaw = i_yaw; outgoing_pids.kd_yaw = d_yaw;
-            outgoing_pids.bias_roll = bias_roll_rec ; outgoing_pids.bias_pitch = bias_pitch_rec; outgoing_pids.bias_yaw = bias_yaw_rec;
-            outgoing_pids.q_gyro = ekf_q_gyro; outgoing_pids.q_bias = ekf_q_bias; outgoing_pids.r_accel = ekf_r_accel;
-
-            printf("\nBroadcasting new PIDs to Drone...\n");
-
-            if (radio.sendPID(&outgoing_pids)) {
-                printf("--> SUCCESS: Drone received and Acknowledged PIDs!\n\n");
-            } else {
-                printf("--> FAILED: Drone offline or out of range. PIDs dropped.\n\n");
-            }
-
-            send_tuning_flag = false;
-            send_tuning_mask = 0;
-        }
-        // 3. Check for incoming Telemetry from the drone
+        // 2. Check for incoming Telemetry from the drone (only if requested)
         while (radio.dataAvailable()) {
             radio_restarted = false;
 
-
             if (radio.readTelemetry(&incoming_telemetry)) {
-                float current_dt_s = incoming_telemetry.dt_s / 100.0f;
-                float dt = (current_dt_s - last_dt_s);
-
-                // Print the live data to the serial monitor
-                printf("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: %.2f, RC_Yaw: %.2f, PID_Roll: %.2f, PID_Pitch: %.2f, PID_Yaw: %.2f, current_dt_s: %.2f, dt: %f\n",
-                       incoming_telemetry.roll / 100.0f,
-                       incoming_telemetry.pitch / 100.0f,
-                       incoming_telemetry.yaw / 100.0f,
-                       incoming_telemetry.rc_roll / 100.0f,
-                       incoming_telemetry.rc_pitch / 100.0f,
-                       incoming_telemetry.rc_yaw / 100.0f,
-                       incoming_telemetry.pid_roll / 100.0f,
-                       incoming_telemetry.pid_pitch / 100.0f,
-                       incoming_telemetry.pid_yaw / 100.0f,
-                       current_dt_s,
-                       dt);
-                last_dt_s = current_dt_s;
+                if (send_telemetry) {
+                    // Just print the attitude for the configurator's 3D visualizer
+                    printf("ATTITUDE,%f,%f,%f\n",
+                           incoming_telemetry.roll / 100.0f,
+                           incoming_telemetry.pitch / 100.0f,
+                           incoming_telemetry.yaw / 100.0f);
+                }
                 last_heartbeat = time_us_32();
             } else {
-                // We received a packet, but it failed the checksum/headers
-                printf("[GROUND] WARNING: Corrupted telemetry packet dropped.\n");
+                // Ignore corrupted telemetry
             }
         }
 
-        // 4. Heartbeat (Lets you know the Ground Station hasn't frozen)
+        // 3. Heartbeat (Lets you know the Ground Station hasn't frozen)
         if (time_us_32() - last_heartbeat > 2000000) {
-            printf("[GROUND] Waiting for Drone telemetry...\n");
             if (!radio_restarted) {
-                printf("[NRF24] Restarting...\n");
                 radio.restart();
-                printf("[NRF24] Restarted...\n");
                 radio_restarted = true;
             }
             last_heartbeat = time_us_32();

@@ -14,9 +14,6 @@ private:
 
     float map_value(float x, float in_min, float in_max, float out_min, float out_max);
 
-    // --- NEW: Map with Deadband ---
-    float map_with_deadband(float pulse_us);
-
     float ticks_to_us(uint32_t delta_ticks);
 
     void pwm_in_program_init(PIO pio, uint sm, uint offset, uint pin);

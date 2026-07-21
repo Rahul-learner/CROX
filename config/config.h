@@ -39,8 +39,10 @@
 // =============================================================================
 #define TELEMETRY_HEADER_1 0xAA
 #define TELEMETRY_HEADER_2 0x55
-#define PID_HEADER_1 0xBB
-#define PID_HEADER_2 0x66
+#define CMD_HEADER_1 0xCC
+#define CMD_HEADER_2 0xDD
+#define RESP_HEADER_1 0xDD
+#define RESP_HEADER_2 0xCC
 
 // =============================================================================
 // BUZZER
@@ -77,16 +79,35 @@
 #define RC_CENTER_US 1500.0f
 
 // =============================================================================
+// FLIGHT MODES
+// =============================================================================
+enum FlightMode {
+    MODE_ANGLE,
+    MODE_ACRO
+};
+
+#define ACRO_RATE_SCALING 6.6666f // Maps RC -30..30 to -200..200 deg/s
+
+// =============================================================================
 // PID DEFAULTS (Roll & Pitch)
 // =============================================================================
-#define DEFAULT_PID_P_ROLL_PITCH 6.5f
-#define DEFAULT_PID_I_ROLL_PITCH 0.06f
-#define DEFAULT_PID_D_ROLL_PITCH 1.67f
+#define DEFAULT_PID_P_ROLL_PITCH_ANGLE 6.5f
+#define DEFAULT_PID_I_ROLL_PITCH_ANGLE 0.06f
+#define DEFAULT_PID_D_ROLL_PITCH_ANGLE 1.67f
+
+#define DEFAULT_PID_P_ROLL_PITCH_ACRO 1.5f
+#define DEFAULT_PID_I_ROLL_PITCH_ACRO 0.01f
+#define DEFAULT_PID_D_ROLL_PITCH_ACRO 0.3f
 
 // PID DEFAULTS (Yaw)
 #define DEFAULT_PID_P_YAW 4.5f
 #define DEFAULT_PID_I_YAW 0.2f
 #define DEFAULT_PID_D_YAW 0.0f
+
+// Feed-Forward Gains (Betaflight style)
+#define DEFAULT_FF_ROLL 0.0f
+#define DEFAULT_FF_PITCH 0.0f
+#define DEFAULT_FF_YAW 0.0f
 
 // PID Constraints
 #define PID_INTEGRAL_LIMIT 400.0f
@@ -114,16 +135,42 @@
 #define DEFAULT_BIAS_YAW 0.0f
 
 // =============================================================================
+// RECEIVER TUNING
+// =============================================================================
+#define DEFAULT_RC_EXPO 0.0f
+#define DEFAULT_RC_DEADBAND 8.0f
+#define DEFAULT_RC_YAW_DEADBAND 5.0f
+
+#define DEFAULT_RC_ROLL_REVERSE false
+#define DEFAULT_RC_PITCH_REVERSE false
+#define DEFAULT_RC_YAW_REVERSE false
+
+// Centering offsets
+#define DEFAULT_RC_ROLL_CENTER 1495.0f
+#define DEFAULT_RC_PITCH_CENTER 1510.0f
+#define DEFAULT_RC_YAW_CENTER 1498.0f
+
+// =============================================================================
 // BLACKBOX
 // =============================================================================
 #define BLACKBOX_RAM_BYTES (256 * 1024)   // 256 KB of RAM
 #define FLASH_TARGET_OFFSET (2048 * 1024) // Save at the 2 MB mark
 #define FLASH_MAX_SIZE (2048 * 1024)      // 2 MB of Flash available for ring buffer
 
+// SD Card configuration (shares SPI1 with NRF24)
+#define USE_SD_CARD_LOGGING false  // Set to false if physically swapping to NRF24
+#define USE_NRF24_RADIO (!USE_SD_CARD_LOGGING)
+#define SD_SPI_PORT spi1
+#define SD_PIN_MISO 12
+#define SD_PIN_CS 13              // Same as RADIO_CSN since they are physically swapped
+#define SD_PIN_SCK 10
+#define SD_PIN_MOSI 11
+
 // =============================================================================
-// TELEMETRY (UART — EKF testing only)
+// TELEMETRY & MSP
 // =============================================================================
-// Shares GPIO 12/13 with NRF24 (MISO/CSN). Radio must not be used
+
+// UART Telemetry (Shares GPIO 12/13 with NRF24)
 // while UART telemetry is active. IMU remains available.
 #define TELEM_UART_ID uart0
 #define TELEM_UART_TX_PIN 12 // Shared with RADIO_MISO
