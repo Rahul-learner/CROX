@@ -79,7 +79,6 @@ void process_command(char* buffer) {
     else if (strncmp(buffer, "PID_ACRO_RP,", 12) == 0) {
         sscanf(buffer, "PID_ACRO_RP,%f,%f,%f", &pid_p_roll_pitch_acro, &pid_i_roll_pitch_acro, &pid_d_roll_pitch_acro);
         DEBUG_PRINT("ACK PID_ACRO_RP: %f, %f, %f\n", pid_p_roll_pitch_acro, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro);
-        pids_updated_via_msp = true;
     }
     else if (strncmp(buffer, "ANGLE_TUNE,", 11) == 0) {
         sscanf(buffer, "ANGLE_TUNE,%f,%f,%f", &angle_strength, &angle_max_deg, &angle_max_rate);
@@ -288,7 +287,6 @@ void core1_entry() {
                     pid_p_roll_pitch_acro = incoming_pids.kp_roll_pitch / 1000.0f;
                     pid_i_roll_pitch_acro = incoming_pids.ki_roll_pitch / 1000.0f;
                     pid_d_roll_pitch_acro = incoming_pids.kd_roll_pitch / 1000.0f;
-                    pids_updated_via_msp = true;
                 }
                 if (incoming_pids.update_mask & 0x02) {
                     pid_p_yaw = incoming_pids.kp_yaw / 1000.0f;
@@ -312,7 +310,6 @@ void core1_entry() {
                 angle_strength = incoming_angle.angle_strength / 1000.0f;
                 angle_max_deg = incoming_angle.angle_max_deg / 10.0f;
                 angle_max_rate = incoming_angle.angle_max_rate / 10.0f;
-                pids_updated_via_msp = true; // Signal outer loop that config changed
 
                 fc_buzzer.play_tone(3); // 3kHz tone for angle tuning changes
                 buzzer_off_time = time_us_32() + 150000; // 150ms beep

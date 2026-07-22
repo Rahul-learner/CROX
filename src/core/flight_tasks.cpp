@@ -135,9 +135,9 @@ void update_pid_and_motors(WritePWM &motor, float gx_rate, float gy_rate, float 
   pitch_pid.set_pid(pid_p_roll_pitch_acro * tpa_factor_dynamic, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro * tpa_factor_dynamic);
   yaw_pid.set_pid(pid_p_yaw * tpa_factor_dynamic, pid_i_yaw, pid_d_yaw * tpa_factor_dynamic);
 
-  roll_control_output = roll_pid.compute(setpoint_roll, gx_rate, dt_pid) + ff_roll_out;
+  //roll_control_output = roll_pid.compute(setpoint_roll, gx_rate, dt_pid) + ff_roll_out;
   pitch_control_output = pitch_pid.compute(setpoint_pitch, gy_rate, dt_pid) + ff_pitch_out;
-  yaw_control_output = yaw_pid.compute(setpoint_yaw, gz_rate, dt_pid) + ff_yaw_out;
+  // yaw_control_output = yaw_pid.compute(setpoint_yaw, gz_rate, dt_pid) + ff_yaw_out;
 
   // Motor PWM output
   motor.update_motors_pwm(receiver_pwm[2], roll_control_output,

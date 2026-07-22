@@ -98,14 +98,14 @@ enum FlightMode {
 // =============================================================================
 // RATE PID DEFAULTS (Inner Loop)
 // =============================================================================
-#define DEFAULT_PID_P_ROLL_PITCH_ACRO 7.20000f
-#define DEFAULT_PID_I_ROLL_PITCH_ACRO 0.50000f
-#define DEFAULT_PID_D_ROLL_PITCH_ACRO 0.05000f
+#define DEFAULT_PID_P_ROLL_PITCH_ACRO 3.50000f
+#define DEFAULT_PID_I_ROLL_PITCH_ACRO 0.10000f
+#define DEFAULT_PID_D_ROLL_PITCH_ACRO 0.15000f
 
 // PID DEFAULTS (Yaw)
-#define DEFAULT_PID_P_YAW 3.0f
-#define DEFAULT_PID_I_YAW 1.0f
-#define DEFAULT_PID_D_YAW 0.0f
+#define DEFAULT_PID_P_YAW 4.00000f
+#define DEFAULT_PID_I_YAW 0.10000f
+#define DEFAULT_PID_D_YAW 0.00000f
 
 // Feed-Forward Gains (Betaflight style)
 #define DEFAULT_FF_ROLL 0.0f

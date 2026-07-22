@@ -67,8 +67,6 @@ extern volatile float shared_gx;
 extern volatile float shared_gy;
 extern volatile float shared_gz;
 
-extern volatile bool pids_updated_via_msp;
-
 extern volatile bool request_accel_calibration;
 extern volatile bool request_noise_calibration;
 

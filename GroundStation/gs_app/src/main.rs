@@ -137,12 +137,12 @@ impl Default for SerialConnection {
             q_bias: 0.00001,
             r_accel: 20.0,
 
-            pid_acro_rp_p: 1.75,
-            pid_acro_rp_i: 0.05,
-            pid_acro_rp_d: 0.47,
+            pid_acro_rp_p: 3.5,
+            pid_acro_rp_i: 0.1,
+            pid_acro_rp_d: 0.15,
 
-            pid_y_p: 1.3,
-            pid_y_i: 0.0,
+            pid_y_p: 4.0,
+            pid_y_i: 0.1,
             pid_y_d: 0.0,
             
             angle_strength: 4.5,

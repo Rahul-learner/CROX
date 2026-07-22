@@ -111,8 +111,6 @@ volatile float shared_gx = 0.0f;
 volatile float shared_gy = 0.0f;
 volatile float shared_gz = 0.0f;
 
-volatile bool pids_updated_via_msp = false;
-
 // receiver data
 float receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 float raw_receiver_pwm[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -343,11 +341,6 @@ int main() {
                 if ((current_time_telemetry_us - last_update_telemetry_us) > 1000000 / 60) {
                     update_telemetry_and_blackbox(motor, gz_rate, dt_ekf, dt_pid, current_time_telemetry_us, blackbox_updated);
                     last_update_telemetry_us = current_time_telemetry_us;
-                    
-                    if (pids_updated_via_msp) {
-                        pids_updated_via_msp = false;
-                        fc_buzzer.play_tone(2);
-                    }
                     
                     DEBUG_PRINT("Roll: %.2f, Pitch: %.2f, Yaw: %.2f, RC_Roll: %.2f, RC_Pitch: %.2f, "
                                 "EKF_calc_us: %llu, PID_calc_us: %llu, "
