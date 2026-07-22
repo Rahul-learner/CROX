@@ -107,32 +107,37 @@ void update_pid_and_motors(WritePWM &motor, float gx_rate, float gy_rate, float 
   prev_acro_pitch_sp = acro_pitch_sp;
   prev_acro_yaw_sp = acro_yaw_sp;
 
-  // Dynamically set PIDs, scaling P and D by the TPA factor
-  if (current_flight_mode == MODE_ACRO) {
-      setpoint_roll = acro_roll_sp;
-      setpoint_pitch = acro_pitch_sp;
-      setpoint_yaw = acro_yaw_sp;
+  if (current_flight_mode == MODE_ANGLE) {
+      // Outer Loop: Map stick (-30..+30) to target angle (-angle_max_deg..+angle_max_deg)
+      float target_roll_deg  = receiver_pwm[0] * (angle_max_deg / 30.0f);
+      float target_pitch_deg = receiver_pwm[1] * (angle_max_deg / 30.0f);
       
-      roll_pid.set_pid(pid_p_roll_pitch_acro * tpa_factor_dynamic, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro * tpa_factor_dynamic);
-      pitch_pid.set_pid(pid_p_roll_pitch_acro * tpa_factor_dynamic, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro * tpa_factor_dynamic);
-      yaw_pid.set_pid(pid_p_yaw * tpa_factor_dynamic, pid_i_yaw, pid_d_yaw * tpa_factor_dynamic);
-
-      roll_control_output = roll_pid.compute(acro_roll_sp, gx_rate, dt_pid) + ff_roll_out;
-      pitch_control_output = pitch_pid.compute(acro_pitch_sp, gy_rate, dt_pid) + ff_pitch_out;
-      yaw_control_output = yaw_pid.compute(acro_yaw_sp, gz_rate, dt_pid) + ff_yaw_out;
+      // Proportional controller: Calculate rate setpoint to correct angle error
+      float roll_rate_cmd  = angle_strength * (target_roll_deg - roll);
+      float pitch_rate_cmd = angle_strength * (target_pitch_deg - pitch);
+      
+      // Clamp rate command to prevent jerky corrections
+      roll_rate_cmd  = fmaxf(-angle_max_rate, fminf(angle_max_rate, roll_rate_cmd));
+      pitch_rate_cmd = fmaxf(-angle_max_rate, fminf(angle_max_rate, pitch_rate_cmd));
+      
+      setpoint_roll  = roll_rate_cmd;
+      setpoint_pitch = pitch_rate_cmd;
+      setpoint_yaw   = acro_yaw_sp; // Yaw is always rate-controlled
   } else {
-      setpoint_roll = receiver_pwm[0];
-      setpoint_pitch = receiver_pwm[1];
-      setpoint_yaw = acro_yaw_sp;
-      
-      roll_pid.set_pid(pid_p_roll_pitch_angle * tpa_factor_dynamic, pid_i_roll_pitch_angle, pid_d_roll_pitch_angle * tpa_factor_dynamic);
-      pitch_pid.set_pid(pid_p_roll_pitch_angle * tpa_factor_dynamic, pid_i_roll_pitch_angle, pid_d_roll_pitch_angle * tpa_factor_dynamic);
-      yaw_pid.set_pid(pid_p_yaw * tpa_factor_dynamic, pid_i_yaw, pid_d_yaw * tpa_factor_dynamic);
-
-      roll_control_output = roll_pid.compute(receiver_pwm[0], roll, dt_pid) + ff_roll_out;
-      pitch_control_output = pitch_pid.compute(receiver_pwm[1], pitch, dt_pid) + ff_pitch_out;
-      yaw_control_output = yaw_pid.compute(acro_yaw_sp, gz_rate, dt_pid) + ff_yaw_out;
+      // Acro Mode: Stick maps directly to rate setpoint
+      setpoint_roll  = acro_roll_sp;
+      setpoint_pitch = acro_pitch_sp;
+      setpoint_yaw   = acro_yaw_sp;
   }
+
+  // Inner Loop: Always operate on gyro rate
+  roll_pid.set_pid(pid_p_roll_pitch_acro * tpa_factor_dynamic, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro * tpa_factor_dynamic);
+  pitch_pid.set_pid(pid_p_roll_pitch_acro * tpa_factor_dynamic, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro * tpa_factor_dynamic);
+  yaw_pid.set_pid(pid_p_yaw * tpa_factor_dynamic, pid_i_yaw, pid_d_yaw * tpa_factor_dynamic);
+
+  roll_control_output = roll_pid.compute(setpoint_roll, gx_rate, dt_pid) + ff_roll_out;
+  pitch_control_output = pitch_pid.compute(setpoint_pitch, gy_rate, dt_pid) + ff_pitch_out;
+  yaw_control_output = yaw_pid.compute(setpoint_yaw, gz_rate, dt_pid) + ff_yaw_out;
 
   // Motor PWM output
   motor.update_motors_pwm(receiver_pwm[2], roll_control_output,

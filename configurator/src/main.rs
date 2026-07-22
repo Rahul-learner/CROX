@@ -60,6 +60,39 @@ pub enum ConnectionMode {
     GroundStation,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum LogLevel {
+    Info,
+    Tx,
+    Rx,
+    Warn,
+    Error,
+}
+
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: LogLevel,
+    pub message: String,
+}
+
+use std::sync::Mutex;
+pub static LOGS: Mutex<Vec<LogEntry>> = Mutex::new(Vec::new());
+
+pub fn log_event(message: &str, level: LogLevel) {
+    if let Ok(mut logs) = LOGS.lock() {
+        let now = chrono::Local::now();
+        let timestamp = now.format("%H:%M:%S%.3f").to_string();
+        logs.push(LogEntry {
+            timestamp,
+            level,
+            message: message.to_string(),
+        });
+        if logs.len() > 1000 {
+            logs.drain(0..100);
+        }
+    }
+}
+
 struct ConfiguratorApp {
     selected_tab: Tab,
     port: Option<Box<dyn serialport::SerialPort>>,
@@ -81,6 +114,9 @@ struct ConfiguratorApp {
     configuration_state: configuration::ConfigurationState,
     cli_state: cli::CliState,
     ekf_state: ekf::EkfState,
+    
+    // Log Terminal
+    log_terminal_open: bool,
 }
 
 impl Default for ConfiguratorApp {
@@ -102,6 +138,7 @@ impl Default for ConfiguratorApp {
             configuration_state: configuration::ConfigurationState::default(),
             cli_state: cli::CliState::default(),
             ekf_state: ekf::EkfState::default(),
+            log_terminal_open: true, // Open by default
         }
     }
 }
@@ -192,20 +229,27 @@ impl eframe::App for ConfiguratorApp {
                             self.connection_mode = ConnectionMode::DirectUSB; // Default
 
                             // Probe device type
+                            log_event("Probing device type with GET_CONFIG...", LogLevel::Tx);
                             if let Err(e) = port.write_all(b"GET_CONFIG\n") {
                                 println!("Probe error: {}", e);
+                                log_event(&format!("Probe error: {}", e), LogLevel::Error);
                             }
                             std::thread::sleep(Duration::from_millis(100));
                             let mut buf = [0u8; 1024];
                             if let Ok(n) = port.read(&mut buf) {
                                 let resp = String::from_utf8_lossy(&buf[..n]);
+                                log_event(&format!("RX: {}", resp.trim()), LogLevel::Rx);
                                 if resp.contains("DEVICE_TYPE,GROUNDSTATION") {
                                     self.connection_mode = ConnectionMode::GroundStation;
                                     self.status_msg = "Connected (Ground Station)".to_string();
+                                    log_event("Detected Ground Station", LogLevel::Info);
                                 } else {
                                     self.connection_mode = ConnectionMode::DirectUSB;
                                     self.status_msg = "Connected (Direct USB)".to_string();
+                                    log_event("Detected Direct USB connection", LogLevel::Info);
                                 }
+                            } else {
+                                log_event("No response to probe, assuming Direct USB", LogLevel::Warn);
                             }
                         }
                         Err(e) => {
@@ -303,6 +347,7 @@ impl eframe::App for ConfiguratorApp {
                             self.port = None;
                             self.status_msg = "Disconnected".to_string();
                             self.connection_mode = ConnectionMode::Disconnected;
+                            log_event("Disconnected from serial port.", LogLevel::Warn);
                         }
                     }
                     
@@ -355,12 +400,50 @@ impl eframe::App for ConfiguratorApp {
                 };
                 ui.label(RichText::new(&self.status_msg).color(status_color).size(12.0));
                 
+                ui.add_space(10.0);
+                if ui.add(egui::Button::new(
+                    RichText::new(if self.log_terminal_open { "▼ Logs" } else { "▲ Logs" }).size(12.0)
+                ).fill(Color32::TRANSPARENT)).clicked() {
+                    self.log_terminal_open = !self.log_terminal_open;
+                }
+                
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(RichText::new("Firmware: CROX FC v0.1 (Target: RP2350)")
                         .color(Color32::from_rgb(150, 150, 150)).size(11.0));
                 });
             });
         });
+
+        // --- LOG TERMINAL PANEL ---
+        if self.log_terminal_open {
+            let log_frame = Frame::default()
+                .fill(Color32::from_rgb(20, 20, 20))
+                .inner_margin(Margin::same(8.0));
+            egui::TopBottomPanel::bottom("log_terminal")
+                .frame(log_frame)
+                .resizable(true)
+                .default_height(150.0)
+                .min_height(50.0)
+                .max_height(400.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if let Ok(logs) = LOGS.lock() {
+                            for log in logs.iter() {
+                                let color = match log.level {
+                                    LogLevel::Info => Color32::from_rgb(200, 200, 200),
+                                    LogLevel::Tx => Color32::from_rgb(100, 150, 255),
+                                    LogLevel::Rx => Color32::from_rgb(100, 255, 150),
+                                    LogLevel::Warn => Color32::from_rgb(255, 200, 50),
+                                    LogLevel::Error => Color32::from_rgb(255, 100, 100),
+                                };
+                                let text = format!("[{}] {}", log.timestamp, log.message);
+                                ui.label(RichText::new(text).color(color).family(egui::FontFamily::Monospace).size(12.0));
+                            }
+                        }
+                    });
+                });
+        }
 
         // --- LEFT SIDEBAR ---
         let side_frame = Frame::default()
@@ -401,6 +484,7 @@ impl eframe::App for ConfiguratorApp {
                 
                 if response.clicked() && tab.is_implemented() {
                     if self.selected_tab != tab {
+                        log_event(&format!("Switched to {} tab", tab.name()), LogLevel::Info);
                         self.selected_tab = tab;
                         match tab {
                             Tab::Tuning => self.tuning_state.sync_from_fc(&mut self.port),

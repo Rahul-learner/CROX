@@ -160,6 +160,11 @@ impl ModesState {
                                     self.cpu_freq_khz = cpu;
                                 }
                             }
+                        } else {
+                            let raw_line = line.trim();
+                            if !raw_line.is_empty() && !raw_line.starts_with("DEBUG") {
+                                crate::log_event(&format!("RX: {}", raw_line), crate::LogLevel::Rx);
+                            }
                         }
                     }
                 }
@@ -171,6 +176,7 @@ impl ModesState {
         if let Some(port) = port_handle {
             let cmd = format!("SET_MODE,{}\n", mode);
             let _ = port.write(cmd.as_bytes());
+            crate::log_event(&format!("TX: {}", cmd.trim()), crate::LogLevel::Tx);
             let _ = port.flush();
             self.status_msg = format!("Switched to {} mode", mode);
         }

@@ -5,18 +5,33 @@ use std::time::{Duration, Instant};
 use egui::{Color32, Pos2, Stroke, Vec2, RichText, Margin};
 
 pub struct SetupState {
-    pub roll: f32, // degrees
-    pub pitch: f32,
-    pub yaw: f32,
+    // Raw telemetry values (degrees)
+    raw_roll: f32,
+    raw_pitch: f32,
+    raw_yaw: f32,
+    // Smoothed values used for rendering
+    roll: f32, // degrees
+    pitch: f32,
+    yaw: f32,
+    // Camera offset from user mouse drag (radians)
+    cam_yaw_offset: f32,
+    cam_pitch_offset: f32,
+    zoom: f32,
     last_poll_time: Instant,
 }
 
 impl Default for SetupState {
     fn default() -> Self {
         Self {
+            raw_roll: 0.0,
+            raw_pitch: 0.0,
+            raw_yaw: 0.0,
             roll: 0.0,
             pitch: 0.0,
             yaw: 0.0,
+            cam_yaw_offset: 0.0,
+            cam_pitch_offset: 0.0,
+            zoom: 1.0,
             last_poll_time: Instant::now(),
         }
     }
@@ -62,294 +77,278 @@ impl SetupState {
             self.poll_attitude(port_handle);
         }
 
-        ui.vertical(|ui| {
-            ui.add_space(10.0);
-            
-            // Top Toolbar for Buttons
-            ui.horizontal(|ui| {
-                // Style Betaflight yellow buttons
-                ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_rgb(243, 156, 18);
-                ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::BLACK);
-                ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(241, 196, 15);
-                ui.style_mut().visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::BLACK);
-                
-                if ui.add_sized([180.0, 30.0], egui::Button::new(RichText::new("Calibrate Accelerometer").strong().color(Color32::BLACK))).clicked() {
-                    if let Some(port) = port_handle.as_mut() {
-                        let _ = port.write(b"CALIBRATE_ACCEL\n");
-                    }
-                }
-                ui.add_space(10.0);
-                
-                ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_rgb(100, 100, 100); // disabled look
-                if ui.add_sized([180.0, 30.0], egui::Button::new(RichText::new("Calibrate Magnetometer").color(Color32::from_rgb(200,200,200)))).clicked() { }
-                ui.add_space(10.0);
-                
-                ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_rgb(243, 156, 18);
-                if ui.add_sized([120.0, 30.0], egui::Button::new(RichText::new("Reset / Reboot").strong().color(Color32::BLACK))).clicked() {
-                    if let Some(port) = port_handle.as_mut() {
-                        let _ = port.write(b"REBOOT\n");
-                    }
-                }
-                
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_sized([80.0, 30.0], egui::Button::new(RichText::new("Restore").strong().color(Color32::BLACK))).clicked() { }
-                    ui.add_space(5.0);
-                    if ui.add_sized([80.0, 30.0], egui::Button::new(RichText::new("Backup").strong().color(Color32::BLACK))).clicked() { }
-                });
-            });
-            
-            ui.add_space(15.0);
+        // ── 3D Canvas fills the ENTIRE available area ──
+        let available = ui.available_size();
+        let canvas_size = Vec2::new(available.x.max(300.0), available.y.max(300.0));
 
-            ui.horizontal(|ui| {
-                // Center column: 3D Drone & Info
-                ui.vertical(|ui| {
-                    ui.heading(RichText::new("Setup").size(24.0).strong().color(Color32::WHITE));
-                    ui.label(RichText::new("Place board or frame on leveled surface, proceed with calibration.").color(Color32::from_rgb(180, 180, 180)));
-                    ui.add_space(10.0);
-                    
-                    // 3D Canvas
-                    let available = ui.available_size();
-                    let canvas_size = Vec2::new(available.x.max(400.0), available.y.max(400.0));
-                    
-                    let (response, painter) = ui.allocate_painter(canvas_size, egui::Sense::hover());
-                    let rect = response.rect;
-                    // Draw a nice subtle background
-                    painter.rect_filled(rect, 12.0, Color32::from_rgb(25, 28, 35));
-                    painter.rect_stroke(rect, 12.0, Stroke::new(1.0, Color32::from_rgb(50, 55, 65)));
-                    
-                    // Angle overlays
-                    let overlay_rect = rect.shrink(15.0);
-                    painter.text(
-                        overlay_rect.left_top(),
-                        egui::Align2::LEFT_TOP,
-                        format!("Heading: {:>6.1}°", self.yaw),
-                        egui::FontId::monospace(18.0),
-                        Color32::from_rgb(200, 200, 200),
-                    );
-                    painter.text(
-                        overlay_rect.left_top() + Vec2::new(0.0, 25.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("Pitch:   {:>6.1}°", self.pitch),
-                        egui::FontId::monospace(18.0),
-                        Color32::from_rgb(200, 200, 200),
-                    );
-                    painter.text(
-                        overlay_rect.left_top() + Vec2::new(0.0, 50.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("Roll:    {:>6.1}°", self.roll),
-                        egui::FontId::monospace(18.0),
-                        Color32::from_rgb(200, 200, 200),
-                    );
-                    
-                    // 3D Rendering Logic
-                    let center = rect.center();
-                    let scale = (canvas_size.y.min(canvas_size.x) * 0.35).clamp(80.0, 250.0);
-                    
-                    // Convert angles to radians. Note: Standard aerospace is X forward, Y right, Z down.
-                    let r = self.roll * PI / 180.0;
-                    let p = self.pitch * PI / 180.0;
-                    let y = 0.0; // Yaw disabled in 3D visualizer since it often shows rate or drifts without mag
-                
-                // Drone geometry (X=forward, Y=right, Z=up)
-                // To display nicely in isometric 3D, we add a base camera tilt
-                let cam_pitch = 25.0 * PI / 180.0; // Positive pitch to look from above
-                let cam_yaw = 180.0 * PI / 180.0;  // 180 yaw to face the drone's front towards the bottom of the screen
-                
-                // Function to project 3D to 2D
-                let project = |pt: Point3D| -> (Pos2, f32) {
-                    let rotated = pt.rotate(r, p, y);
-                    let viewed = rotated.rotate(0.0, cam_pitch, cam_yaw);
-                    (Pos2::new(
-                        center.x + viewed.y * scale,
-                        center.y - viewed.x * scale
-                    ), viewed.z)
-                };
-                
-                let mut faces: Vec<(Vec<Point3D>, Color32)> = Vec::new();
+        let (response, painter) = ui.allocate_painter(canvas_size, egui::Sense::drag());
+        let rect = response.rect;
 
-                let mut add_box = |cx: f32, cy: f32, cz: f32, l: f32, w: f32, h: f32, col: Color32, yaw_deg: f32| {
-                    let rad = yaw_deg * PI / 180.0;
-                    let cos_y = rad.cos();
-                    let sin_y = rad.sin();
+        // Premium dark-mode background
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(22, 24, 32));
 
-                    let pts = [
-                        (-l, -w, -h), ( l, -w, -h), ( l,  w, -h), (-l,  w, -h),
-                        (-l, -w,  h), ( l, -w,  h), ( l,  w,  h), (-l,  w,  h),
-                    ];
-                    
-                    let mut v = Vec::new();
-                    for (px, py, pz) in pts {
-                        let rx = px * cos_y - py * sin_y;
-                        let ry = px * sin_y + py * cos_y;
-                        v.push(Point3D {
-                            x: rx + cx,
-                            y: ry + cy,
-                            z: pz + cz
-                        });
-                    }
+        // Handle mouse drag for camera rotation
+        if response.dragged() {
+            let delta = ui.input(|i| i.pointer.delta());
+            self.cam_yaw_offset -= delta.x * 0.005;
+            self.cam_pitch_offset += delta.y * 0.005;
+        }
+        // Handle mouse wheel for zooming
+        if response.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                self.zoom += scroll * 0.005;
+                self.zoom = self.zoom.clamp(0.3, 5.0);
+            }
+        }
 
-                    // Faces using right hand rule (outward normals)
-                    // Added a slight shading based on the face direction for pseudo-lighting
-                    let darken = |c: Color32, factor: f32| -> Color32 {
-                        Color32::from_rgb(
-                            (c.r() as f32 * factor) as u8,
-                            (c.g() as f32 * factor) as u8,
-                            (c.b() as f32 * factor) as u8,
-                        )
-                    };
-                    
-                    faces.push((vec![v[0], v[1], v[2], v[3]], darken(col, 0.4))); // bottom
-                    faces.push((vec![v[4], v[5], v[6], v[7]], col));              // top
-                    faces.push((vec![v[1], v[5], v[6], v[2]], darken(col, 0.7))); // right
-                    faces.push((vec![v[0], v[4], v[7], v[3]], darken(col, 0.7))); // left
-                    faces.push((vec![v[2], v[6], v[7], v[3]], darken(col, 0.85)));// front
-                    faces.push((vec![v[0], v[1], v[5], v[4]], darken(col, 0.6))); // back
-                };
+        // ── Overlaid toolbar buttons (top-left) ──
+        let overlay_rect = rect.shrink(15.0);
+        {
+            let btn_y = overlay_rect.top();
+            let mut btn_x = overlay_rect.left();
 
-                let c_body = Color32::from_rgb(34, 34, 34);
-                let c_arm = Color32::from_rgb(136, 136, 136);
-                let c_red = Color32::from_rgb(255, 51, 51);
-                let c_blue = Color32::from_rgb(51, 51, 255);
-                let c_green = Color32::from_rgb(0, 255, 0);
-
-                // Central body
-                add_box(0.0, 0.0, 0.0, 0.25, 0.25, 0.1, c_body, 0.0);
-                
-                // Arms
-                let arm_l = 0.6;
-                add_box(arm_l/2.0, arm_l/2.0, 0.0, arm_l/2.0, 0.04, 0.04, c_arm, 45.0);
-                add_box(arm_l/2.0, -arm_l/2.0, 0.0, arm_l/2.0, 0.04, 0.04, c_arm, -45.0);
-                add_box(-arm_l/2.0, arm_l/2.0, 0.0, arm_l/2.0, 0.04, 0.04, c_arm, 135.0);
-                add_box(-arm_l/2.0, -arm_l/2.0, 0.0, arm_l/2.0, 0.04, 0.04, c_arm, -135.0);
-                
-                // Rotors
-                add_box(arm_l, arm_l, 0.1, 0.2, 0.2, 0.02, c_red, 0.0); // M2 (Front Right)
-                add_box(arm_l, -arm_l, 0.1, 0.2, 0.2, 0.02, c_blue, 0.0); // M4 (Front Left)
-                add_box(-arm_l, arm_l, 0.1, 0.2, 0.2, 0.02, c_blue, 0.0); // M1 (Back Right)
-                add_box(-arm_l, -arm_l, 0.1, 0.2, 0.2, 0.02, c_red, 0.0); // M3 (Back Left)
-
-                // Indicator Arrow
-                add_box(0.35, 0.0, 0.05, 0.1, 0.02, 0.02, c_green, 0.0);
-                
-                // Project and sort faces (Painter's Algorithm)
-                let mut projected_faces = Vec::new();
-                for (pts, col) in faces {
-                    let mut proj_pts = Vec::new();
-                    let mut avg_z = 0.0;
-                    for pt in pts {
-                        let (p2, z) = project(pt);
-                        proj_pts.push(p2);
-                        avg_z += z;
-                    }
-                    avg_z /= proj_pts.len() as f32;
-                    projected_faces.push((proj_pts, col, avg_z));
-                }
-
-                // Sort by Z descending (largest Z is furthest away, drawn first)
-                projected_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-
-                // Draw faces
-                for (pts, col, _) in projected_faces {
-                    painter.add(egui::Shape::convex_polygon(pts, col, Stroke::new(0.5, Color32::from_rgb(20, 20, 20))));
-                }
-                
-                // Add axis lines
-                let origin = project(Point3D{x:0.0, y:0.0, z:0.0}).0;
-                let axis_len = 1.5;
-                let px = project(Point3D{x:axis_len, y:0.0, z:0.0}).0;
-                let py = project(Point3D{x:0.0, y:axis_len, z:0.0}).0;
-                let pz = project(Point3D{x:0.0, y:0.0, z:axis_len}).0;
-                painter.line_segment([origin, px], Stroke::new(2.0, Color32::from_rgb(255, 50, 50))); // X=Red
-                painter.line_segment([origin, py], Stroke::new(2.0, Color32::from_rgb(50, 255, 50))); // Y=Green
-                painter.line_segment([origin, pz], Stroke::new(2.0, Color32::from_rgb(50, 50, 255))); // Z=Blue
-                
-                
-                let btn_rect = overlay_rect.shrink2(Vec2::new(0.0, 10.0));
-                
-                // Hacky manual hit detection for a virtual button drawn on the canvas
-                let reset_btn_rect = egui::Rect::from_min_size(
-                    btn_rect.right_top() - Vec2::new(150.0, 0.0), 
-                    Vec2::new(150.0, 30.0)
+            let btn_labels = ["Calibrate Accelerometer", "Calibrate Magnetometer", "Reset / Reboot"];
+            let btn_widths = [180.0, 180.0, 120.0];
+            for (i, (label, w)) in btn_labels.iter().zip(btn_widths.iter()).enumerate() {
+                let btn_rect = egui::Rect::from_min_size(
+                    Pos2::new(btn_x, btn_y),
+                    Vec2::new(*w, 28.0),
                 );
-                
-                let hovered = response.hover_pos().map_or(false, |pos| reset_btn_rect.contains(pos));
-                let btn_fill = if hovered { Color32::from_rgb(60, 65, 80) } else { Color32::from_rgb(40, 45, 55) };
-                
-                painter.rect_filled(reset_btn_rect, 6.0, btn_fill);
-                painter.rect_stroke(reset_btn_rect, 6.0, Stroke::new(1.0, Color32::from_rgb(80, 85, 95)));
+                let hovered = response.hover_pos().map_or(false, |pos| btn_rect.contains(pos));
+                let fill = if hovered {
+                    Color32::from_rgb(241, 196, 15)
+                } else {
+                    Color32::from_rgb(243, 156, 18)
+                };
+                painter.rect_filled(btn_rect, 6.0, fill);
                 painter.text(
-                    reset_btn_rect.center(), 
-                    egui::Align2::CENTER_CENTER, 
-                    "Reset Z axis", 
-                    egui::FontId::proportional(14.0), 
-                    Color32::WHITE
+                    btn_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    *label,
+                    egui::FontId::proportional(13.0),
+                    Color32::BLACK,
                 );
-                
                 if hovered && response.clicked() {
-                    self.yaw = 0.0;
+                    match i {
+                        0 => {
+                            if let Some(port) = port_handle.as_mut() {
+                                let _ = port.write(b"CALIBRATE_ACCEL\n");
+                            }
+                        }
+                        2 => {
+                            if let Some(port) = port_handle.as_mut() {
+                                let _ = port.write(b"REBOOT\n");
+                            }
+                        }
+                        _ => {}
+                    }
                 }
-                
-            }); // End Center column
-            
-            ui.add_space(20.0);
-            
-            // Right column: Info Panels
-            ui.vertical(|ui| {
-                ui.set_width(320.0);
-                
-                let panel_frame = egui::Frame::none()
-                    .fill(Color32::from_rgb(30, 35, 45))
-                    .rounding(10.0)
-                    .inner_margin(Margin::same(15.0))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(50, 55, 65)));
-                
-                panel_frame.show(ui, |ui| {
-                    ui.heading(RichText::new("Info").color(Color32::WHITE).strong());
-                    ui.add_space(5.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    egui::Grid::new("info_grid").num_columns(2).spacing([40.0, 8.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Arming Disable Flags:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Battery voltage:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0.0 V").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Capacity drawn:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0 mAh").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Current draw:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0.00 A").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("RSSI:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0 %").color(Color32::WHITE).strong()); ui.end_row();
-                    });
-                });
-                
-                ui.add_space(15.0);
-                
-                panel_frame.show(ui, |ui| {
-                    ui.heading(RichText::new("GPS").color(Color32::WHITE).strong());
-                    ui.add_space(5.0);
-                    ui.separator();
-                    ui.add_space(5.0);
-                    egui::Grid::new("gps_grid").num_columns(2).spacing([40.0, 8.0]).show(ui, |ui| {
-                        ui.label(RichText::new("3D Fix:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("False").color(Color32::from_rgb(231, 76, 60)).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Sats:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Latitude:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0.0000").color(Color32::WHITE).strong()); ui.end_row();
-                        
-                        ui.label(RichText::new("Longitude:").color(Color32::from_rgb(180, 180, 180))); 
-                        ui.label(RichText::new("0.0000").color(Color32::WHITE).strong()); ui.end_row();
-                    });
-                });
-                });
-            });
-        });
+                btn_x += w + 10.0;
+            }
+        }
+
+        // ── Angle overlays (below toolbar) ──
+        let info_top = overlay_rect.left_top() + Vec2::new(0.0, 45.0);
+        painter.text(info_top, egui::Align2::LEFT_TOP,
+            format!("Heading: {:>6.1}°", self.yaw),
+            egui::FontId::monospace(18.0), Color32::from_rgb(200, 200, 200));
+        painter.text(info_top + Vec2::new(0.0, 25.0), egui::Align2::LEFT_TOP,
+            format!("Pitch:   {:>6.1}°", self.pitch),
+            egui::FontId::monospace(18.0), Color32::from_rgb(200, 200, 200));
+        painter.text(info_top + Vec2::new(0.0, 50.0), egui::Align2::LEFT_TOP,
+            format!("Roll:    {:>6.1}°", self.roll),
+            egui::FontId::monospace(18.0), Color32::from_rgb(200, 200, 200));
+
+        // ── 3D Rendering Logic ──
+        let center = rect.center();
+        let base_scale = canvas_size.y.min(canvas_size.x) * 0.35;
+        let scale = base_scale * self.zoom;
+
+        // Low-pass filter for smooth animation
+        const FILTER_ALPHA: f32 = 0.15;
+        self.roll = self.roll * (1.0 - FILTER_ALPHA) + self.raw_roll * FILTER_ALPHA;
+        self.pitch = self.pitch * (1.0 - FILTER_ALPHA) + self.raw_pitch * FILTER_ALPHA;
+        self.yaw = self.yaw * (1.0 - FILTER_ALPHA) + self.raw_yaw * FILTER_ALPHA;
+        let r = self.roll * PI / 180.0;
+        let p = self.pitch * PI / 180.0;
+        let y = self.yaw * PI / 180.0;
+
+        // Camera offsets (no base tilt – lay flat from behind)
+        let cam_pitch = self.cam_pitch_offset;
+        let cam_yaw = self.cam_yaw_offset;
+
+        // Project 3D → 2D  (returns screen pos + depth for sorting)
+        let project = |pt: Point3D| -> (Pos2, f32) {
+            let rotated = pt.rotate(r, p, y);
+            let viewed = rotated.rotate(0.0, cam_pitch, cam_yaw);
+            // X = forward → depth, Y = right → screen X, Z = down → screen Y
+            (Pos2::new(
+                center.x + viewed.y * scale,
+                center.y + viewed.z * scale,
+            ), viewed.x)
+        };
+
+        // ── Build mesh faces ──
+        // Each face stores its 4 world-space vertices, colour, and a depth bias
+        // so the painter's algorithm can break ties deterministically.
+        let mut faces: Vec<(Vec<Point3D>, Color32, f32)> = Vec::new();
+        let mut box_index: f32 = 0.0;
+
+        let mut add_box = |cx: f32, cy: f32, cz: f32, l: f32, w: f32, h: f32, col: Color32, yaw_deg: f32, faces: &mut Vec<(Vec<Point3D>, Color32, f32)>, bias: f32| {
+            let rad = yaw_deg * PI / 180.0;
+            let cos_y = rad.cos();
+            let sin_y = rad.sin();
+
+            let pts = [
+                (-l, -w, -h), ( l, -w, -h), ( l,  w, -h), (-l,  w, -h),
+                (-l, -w,  h), ( l, -w,  h), ( l,  w,  h), (-l,  w,  h),
+            ];
+
+            let mut v = Vec::new();
+            for (px, py, pz) in pts {
+                let rx = px * cos_y - py * sin_y;
+                let ry = px * sin_y + py * cos_y;
+                v.push(Point3D { x: rx + cx, y: ry + cy, z: pz + cz });
+            }
+
+            let darken = |c: Color32, factor: f32| -> Color32 {
+                Color32::from_rgb(
+                    (c.r() as f32 * factor) as u8,
+                    (c.g() as f32 * factor) as u8,
+                    (c.b() as f32 * factor) as u8,
+                )
+            };
+
+            faces.push((vec![v[0], v[1], v[2], v[3]], darken(col, 0.4), bias)); // bottom
+            faces.push((vec![v[4], v[5], v[6], v[7]], col, bias));              // top
+            faces.push((vec![v[1], v[5], v[6], v[2]], darken(col, 0.7), bias)); // right
+            faces.push((vec![v[0], v[4], v[7], v[3]], darken(col, 0.7), bias)); // left
+            faces.push((vec![v[2], v[6], v[7], v[3]], darken(col, 0.85), bias));// front
+            faces.push((vec![v[0], v[1], v[5], v[4]], darken(col, 0.6), bias)); // back
+        };
+
+        // Drone parts (Aerospace: X=forward, Y=right, Z=down)
+        let c_gray       = Color32::from_rgb(178, 178, 178);
+        let c_red        = Color32::from_rgb(230, 51, 51);
+        let c_dark_gray  = Color32::from_rgb(102, 102, 102);
+        let c_darker_gray= Color32::from_rgb(76, 76, 76);
+        let sm = 0.25_f32;
+
+        // Fuselage (center)
+        add_box(0.0,       0.0, 0.0,          1.5*sm, 0.3*sm,  0.25*sm, c_gray,        0.0, &mut faces, { box_index += 1.0; box_index });
+        // Nose / Indicator (front)
+        add_box(1.8*sm,    0.0, 0.0,          0.5*sm, 0.2*sm,  0.15*sm, c_red,         0.0, &mut faces, { box_index += 1.0; box_index });
+        // Main Wing (mounted on top of fuselage: Z = -0.28)
+        add_box(-0.2*sm,   0.0, -0.28*sm,     0.6*sm, 1.75*sm, 0.04*sm, c_dark_gray,   0.0, &mut faces, { box_index += 1.0; box_index });
+        // Vertical Tail Fin (mounted on rear top: Z = -0.55)
+        add_box(-1.1*sm,   0.0, -0.55*sm,     0.4*sm, 0.04*sm, 0.3*sm,  c_darker_gray, 0.0, &mut faces, { box_index += 1.0; box_index });
+
+        // ── Project and sort faces (Painter's Algorithm) ──
+        let mut projected_faces: Vec<(Vec<Pos2>, Color32, f32)> = Vec::new();
+        for (pts, col, bias) in &faces {
+            let mut proj_pts = Vec::new();
+            let mut avg_z = 0.0;
+            for pt in pts {
+                let (p2, z) = project(*pt);
+                proj_pts.push(p2);
+                avg_z += z;
+            }
+            avg_z /= proj_pts.len() as f32;
+            // Add tiny bias based on box index so parts sort deterministically
+            avg_z += bias * 0.001;
+            projected_faces.push((proj_pts, *col, avg_z));
+        }
+
+        // Sort back-to-front (most positive depth = furthest away = drawn first)
+        projected_faces.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Draw faces
+        for (pts, col, _) in &projected_faces {
+            painter.add(egui::Shape::convex_polygon(pts.clone(), *col, Stroke::new(0.5, Color32::from_rgb(20, 20, 20))));
+        }
+
+        // ── Axis lines ──
+        let origin = project(Point3D { x: 0.0, y: 0.0, z: 0.0 }).0;
+        let axis_len = 1.5;
+        let px = project(Point3D { x: axis_len, y: 0.0, z: 0.0 }).0;
+        let py = project(Point3D { x: 0.0, y: axis_len, z: 0.0 }).0;
+        let pz = project(Point3D { x: 0.0, y: 0.0, z: axis_len }).0;
+        painter.line_segment([origin, px], Stroke::new(2.0, Color32::from_rgb(255, 100, 100)));
+        painter.line_segment([origin, py], Stroke::new(2.0, Color32::from_rgb(100, 255, 100)));
+        painter.line_segment([origin, pz], Stroke::new(2.0, Color32::from_rgb(100, 100, 255)));
+        painter.text(px, egui::Align2::LEFT_BOTTOM, "Roll",  egui::FontId::proportional(12.0), Color32::from_rgb(255, 120, 120));
+        painter.text(py, egui::Align2::LEFT_BOTTOM, "Pitch", egui::FontId::proportional(12.0), Color32::from_rgb(120, 255, 120));
+        painter.text(pz, egui::Align2::LEFT_BOTTOM, "Yaw",   egui::FontId::proportional(12.0), Color32::from_rgb(120, 120, 255));
+
+        // ── Reset Z button (top-right) ──
+        let reset_btn_rect = egui::Rect::from_min_size(
+            overlay_rect.right_top() - Vec2::new(150.0, 0.0),
+            Vec2::new(150.0, 30.0),
+        );
+        let hovered = response.hover_pos().map_or(false, |pos| reset_btn_rect.contains(pos));
+        let btn_fill = if hovered { Color32::from_rgb(60, 65, 80) } else { Color32::from_rgb(40, 45, 55) };
+        painter.rect_filled(reset_btn_rect, 6.0, btn_fill);
+        painter.rect_stroke(reset_btn_rect, 6.0, Stroke::new(1.0, Color32::from_rgb(80, 85, 95)));
+        painter.text(reset_btn_rect.center(), egui::Align2::CENTER_CENTER,
+            "Reset Z axis", egui::FontId::proportional(14.0), Color32::WHITE);
+        if hovered && response.clicked() {
+            self.yaw = 0.0;
+        }
+
+        // ── Overlaid Info / GPS panels (bottom-right) ──
+        {
+            let panel_w = 280.0;
+            let panel_margin = 15.0;
+            let panel_x = overlay_rect.right() - panel_w;
+            let mut panel_y = overlay_rect.bottom() - 10.0; // start from bottom
+
+            // GPS panel
+            let gps_entries = [
+                ("3D Fix:", "False", Color32::from_rgb(231, 76, 60)),
+                ("Sats:", "0", Color32::WHITE),
+                ("Latitude:", "0.0000", Color32::WHITE),
+                ("Longitude:", "0.0000", Color32::WHITE),
+            ];
+            let gps_h = 30.0 + gps_entries.len() as f32 * 22.0 + 15.0;
+            panel_y -= gps_h;
+            let gps_rect = egui::Rect::from_min_size(Pos2::new(panel_x, panel_y), Vec2::new(panel_w, gps_h));
+            painter.rect_filled(gps_rect, 10.0, Color32::from_rgba_premultiplied(30, 35, 45, 200));
+            painter.rect_stroke(gps_rect, 10.0, Stroke::new(1.0, Color32::from_rgb(50, 55, 65)));
+            painter.text(gps_rect.left_top() + Vec2::new(panel_margin, 8.0), egui::Align2::LEFT_TOP,
+                "GPS", egui::FontId::proportional(16.0), Color32::WHITE);
+            for (i, (label, value, col)) in gps_entries.iter().enumerate() {
+                let row_y = gps_rect.top() + 32.0 + i as f32 * 22.0;
+                painter.text(Pos2::new(gps_rect.left() + panel_margin, row_y), egui::Align2::LEFT_TOP,
+                    *label, egui::FontId::proportional(13.0), Color32::from_rgb(180, 180, 180));
+                painter.text(Pos2::new(gps_rect.left() + panel_margin + 140.0, row_y), egui::Align2::LEFT_TOP,
+                    *value, egui::FontId::proportional(13.0), *col);
+            }
+
+            // Info panel
+            panel_y -= 10.0; // gap
+            let info_entries = [
+                ("Arming Disable Flags:", "0"),
+                ("Battery voltage:", "0.0 V"),
+                ("Capacity drawn:", "0 mAh"),
+                ("Current draw:", "0.00 A"),
+                ("RSSI:", "0 %"),
+            ];
+            let info_h = 30.0 + info_entries.len() as f32 * 22.0 + 15.0;
+            panel_y -= info_h;
+            let info_rect = egui::Rect::from_min_size(Pos2::new(panel_x, panel_y), Vec2::new(panel_w, info_h));
+            painter.rect_filled(info_rect, 10.0, Color32::from_rgba_premultiplied(30, 35, 45, 200));
+            painter.rect_stroke(info_rect, 10.0, Stroke::new(1.0, Color32::from_rgb(50, 55, 65)));
+            painter.text(info_rect.left_top() + Vec2::new(panel_margin, 8.0), egui::Align2::LEFT_TOP,
+                "Info", egui::FontId::proportional(16.0), Color32::WHITE);
+            for (i, (label, value)) in info_entries.iter().enumerate() {
+                let row_y = info_rect.top() + 32.0 + i as f32 * 22.0;
+                painter.text(Pos2::new(info_rect.left() + panel_margin, row_y), egui::Align2::LEFT_TOP,
+                    *label, egui::FontId::proportional(13.0), Color32::from_rgb(180, 180, 180));
+                painter.text(Pos2::new(info_rect.left() + panel_margin + 160.0, row_y), egui::Align2::LEFT_TOP,
+                    *value, egui::FontId::proportional(13.0), Color32::WHITE);
+            }
+        }
     }
     
     fn poll_attitude(&mut self, port_handle: &mut Option<Box<dyn serialport::SerialPort>>) {
@@ -366,10 +365,15 @@ impl SetupState {
                             let parts: Vec<&str> = line.split(',').collect();
                             if parts.len() == 4 {
                                 if let (Ok(r), Ok(p), Ok(y)) = (parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>()) {
-                                    self.roll = r;
-                                    self.pitch = p;
-                                    self.yaw = y;
-                                }
+                                     self.raw_roll = r;
+                                     self.raw_pitch = p;
+                                     self.raw_yaw = y;
+                                 }
+                            }
+                        } else {
+                            let raw_line = line.trim();
+                            if !raw_line.is_empty() && !raw_line.starts_with("DEBUG") {
+                                crate::log_event(&format!("RX: {}", raw_line), crate::LogLevel::Rx);
                             }
                         }
                     }

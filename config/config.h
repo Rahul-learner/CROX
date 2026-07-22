@@ -89,19 +89,22 @@ enum FlightMode {
 #define ACRO_RATE_SCALING 6.6666f // Maps RC -30..30 to -200..200 deg/s
 
 // =============================================================================
-// PID DEFAULTS (Roll & Pitch)
+// ANGLE MODE TUNING (Outer Loop)
 // =============================================================================
-#define DEFAULT_PID_P_ROLL_PITCH_ANGLE 6.5f
-#define DEFAULT_PID_I_ROLL_PITCH_ANGLE 0.06f
-#define DEFAULT_PID_D_ROLL_PITCH_ANGLE 1.67f
+#define DEFAULT_ANGLE_STRENGTH 5.0f
+#define DEFAULT_ANGLE_MAX_DEG 45.0f
+#define DEFAULT_ANGLE_MAX_RATE 300.0f
 
-#define DEFAULT_PID_P_ROLL_PITCH_ACRO 1.5f
-#define DEFAULT_PID_I_ROLL_PITCH_ACRO 0.01f
-#define DEFAULT_PID_D_ROLL_PITCH_ACRO 0.3f
+// =============================================================================
+// RATE PID DEFAULTS (Inner Loop)
+// =============================================================================
+#define DEFAULT_PID_P_ROLL_PITCH_ACRO 7.20000f
+#define DEFAULT_PID_I_ROLL_PITCH_ACRO 0.50000f
+#define DEFAULT_PID_D_ROLL_PITCH_ACRO 0.05000f
 
 // PID DEFAULTS (Yaw)
-#define DEFAULT_PID_P_YAW 4.5f
-#define DEFAULT_PID_I_YAW 0.2f
+#define DEFAULT_PID_P_YAW 3.0f
+#define DEFAULT_PID_I_YAW 1.0f
 #define DEFAULT_PID_D_YAW 0.0f
 
 // Feed-Forward Gains (Betaflight style)
@@ -111,7 +114,7 @@ enum FlightMode {
 
 // PID Constraints
 #define PID_INTEGRAL_LIMIT 400.0f
-#define PID_D_CUTOFF_HZ 25.0f   // increase for high frequency noise, decrease for low frequency noise
+#define PID_D_CUTOFF_HZ 25.0f
 
 // =============================================================================
 // EKF DEFAULTS
@@ -124,8 +127,8 @@ enum FlightMode {
 // =============================================================================
 // TPA SETTINGS
 // =============================================================================
-#define TPA_BREAKPOINT 1350.0f  // Throttle value above which PID attenuation begins (just above hover)
-#define TPA_FACTOR 0.30f        // 30% reduction in P and D gains at maximum throttle (2000)
+#define TPA_BREAKPOINT 1350.0f
+#define TPA_FACTOR 0.30000f
 
 // =============================================================================
 // ANGLE BIAS DEFAULTS
@@ -146,9 +149,9 @@ enum FlightMode {
 #define DEFAULT_RC_YAW_REVERSE false
 
 // Centering offsets
-#define DEFAULT_RC_ROLL_CENTER 1495.0f
-#define DEFAULT_RC_PITCH_CENTER 1510.0f
-#define DEFAULT_RC_YAW_CENTER 1498.0f
+#define DEFAULT_RC_ROLL_CENTER 1500.0f
+#define DEFAULT_RC_PITCH_CENTER 1499.0f
+#define DEFAULT_RC_YAW_CENTER 1502.0f
 
 // =============================================================================
 // BLACKBOX

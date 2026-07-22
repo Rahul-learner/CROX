@@ -15,10 +15,9 @@
 
 NRF24 radio(NRF_SPI_PORT, NRF_CE_PIN, NRF_CSN_PIN, NRF_SCK_PIN, NRF_MOSI_PIN, NRF_MISO_PIN);
 
-bool radio_restarted = false;
-bool send_telemetry = false;
+uint32_t last_radio_activity = 0;
 
-// Helper to convert float to bytes
+// Helper to convert float to/from bytes
 void pack_float(uint8_t* dest, float val) {
     memcpy(dest, &val, 4);
 }
@@ -33,11 +32,12 @@ void process_command_and_bridge(char* buffer) {
     RadioCommandPacket cmd = {0};
     cmd.header1 = CMD_HEADER_1;
     cmd.header2 = CMD_HEADER_2;
-    
+
     // Parse the command string to cmd_id and payload
-    if (strncmp(buffer, "GET_ATTITUDE", 12) == 0) {
-        cmd.cmd_id = 0x01;
-    } else if (strncmp(buffer, "GET_PID_ACRO_RP", 15) == 0) {
+if (strncmp(buffer, "CHECK_RADIO", 11) == 0) {
+    if (radio.checkConnection()) { printf("RADIO_OK\n"); } else { printf("RADIO_FAIL\n"); }
+    return;
+} else if (strncmp(buffer, "GET_PID_ACRO_RP", 15) == 0) {
         cmd.cmd_id = 0x02;
     } else if (strncmp(buffer, "SET_PID_ACRO_RP,", 16) == 0) {
         cmd.cmd_id = 0x03;
@@ -151,22 +151,20 @@ void process_command_and_bridge(char* buffer) {
         // Special case: configurator uses this for auto-detection
         printf("DEVICE_TYPE,GROUNDSTATION\n");
         return;
-    } else if (strncmp(buffer, "START_TELEMETRY", 15) == 0) {
-        cmd.cmd_id = 0xF0;
-        send_telemetry = true;
-    } else if (strncmp(buffer, "STOP_TELEMETRY", 14) == 0) {
-        cmd.cmd_id = 0xF1;
-        send_telemetry = false;
     } else {
-        // Unknown command or not supported over radio (e.g. MOTOR_TEST)
+        // Unknown or unsupported command (e.g. BLACKBOX, MOTOR_TEST)
         return;
     }
 
     // Transmit over radio
     if (!radio.sendCommand(&cmd)) {
+        printf("GS_NACK %s\n", buffer);
         return;
     }
-
+    printf("GS_ACK %s\n", buffer);
+    last_radio_activity = time_us_32();
+    // Small delay to give radio time to settle
+    sleep_ms(5);
     // Wait for response up to 200ms
     uint32_t start_time = time_us_32();
     RadioResponsePacket resp = {};
@@ -176,12 +174,14 @@ void process_command_and_bridge(char* buffer) {
         if (radio.dataAvailable()) {
             if (radio.readResponse(&resp)) {
                 got_resp = true;
+                last_radio_activity = time_us_32();
                 break;
             }
         }
     }
 
     if (!got_resp) {
+        printf("GS_TIMEOUT %s\n", buffer);
         return;
     }
 
@@ -191,9 +191,6 @@ void process_command_and_bridge(char* buffer) {
     uint16_t* u16_p = (uint16_t*)resp.payload;
 
     switch (resp.cmd_id) {
-        case 0x01: // GET_ATTITUDE
-            printf("ATTITUDE,%f,%f,%f\n", i16_p[0]/100.0f, i16_p[1]/100.0f, i16_p[2]/100.0f);
-            break;
         case 0x02: // GET_PID_ACRO_RP
             printf("PID_ACRO_RP,%f,%f,%f\n", i16_p[0]/1000.0f, i16_p[1]/1000.0f, i16_p[2]/1000.0f);
             break;
@@ -284,12 +281,6 @@ void process_command_and_bridge(char* buffer) {
         case 0x1E: // REBOOT
             printf("ACK REBOOT\n");
             break;
-        case 0xF0: // START_TELEMETRY
-            printf("ACK START_TELEMETRY\n");
-            break;
-        case 0xF1: // STOP_TELEMETRY
-            printf("ACK STOP_TELEMETRY\n");
-            break;
     }
 }
 
@@ -299,15 +290,14 @@ void check_serial_commands() {
     static int rx_index = 0;
     int c;
 
-    // Read characters until the buffer is empty (timeout of 0 microseconds)
     while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
         if (c == '\n' || c == '\r') {
             if (rx_index > 0) {
-                rx_buffer[rx_index] = '\0'; // Terminate string
-                process_command_and_bridge(rx_buffer); // Parse it
-                rx_index = 0;               // Reset for next command
+                rx_buffer[rx_index] = '\0';
+                process_command_and_bridge(rx_buffer);
+                rx_index = 0;
             }
-        } else if (rx_index < sizeof(rx_buffer) - 1) {
+        } else if (rx_index < (int)sizeof(rx_buffer) - 1) {
             rx_buffer[rx_index++] = (char)c;
         }
     }
@@ -320,7 +310,7 @@ void check_serial_commands() {
 int main() {
     stdio_init_all();
 
-    // Give your PC extra time to recognize the USB COM port before printing
+    // Give the PC time to recognize the USB COM port
     sleep_ms(3000);
 
     // 1. Verify SPI Hardware Connection
@@ -331,46 +321,24 @@ int main() {
 
     radio.init();
 
-    // 2. Setup Addresses (Mirrored from Drone)
+    // 2. Setup Addresses (mirrored from Drone)
     const uint8_t drone_addr[5]  = {'D', 'R', 'O', 'N', '1'};
     const uint8_t ground_addr[5] = {'G', 'R', 'N', 'D', '1'};
 
-    // Ground Station Transmits TO Drone, Receives AS Ground
+    // GS transmits TO Drone, receives AS Ground
     radio.setAddresses(drone_addr, ground_addr);
     radio.startListening();
 
-    TelemetryPacket incoming_telemetry = {};
-    uint32_t last_heartbeat = time_us_32();
+    last_radio_activity = time_us_32();
 
     while (true) {
-        // 1. Check for user typing in the Serial Console (transparent bridge)
+        // Process any incoming serial commands and bridge to radio
         check_serial_commands();
 
-        // 2. Check for incoming Telemetry from the drone (only if requested)
-        while (radio.dataAvailable()) {
-            radio_restarted = false;
-
-            if (radio.readTelemetry(&incoming_telemetry)) {
-                if (send_telemetry) {
-                    // Just print the attitude for the configurator's 3D visualizer
-                    printf("ATTITUDE,%f,%f,%f\n",
-                           incoming_telemetry.roll / 100.0f,
-                           incoming_telemetry.pitch / 100.0f,
-                           incoming_telemetry.yaw / 100.0f);
-                }
-                last_heartbeat = time_us_32();
-            } else {
-                // Ignore corrupted telemetry
-            }
-        }
-
-        // 3. Heartbeat (Lets you know the Ground Station hasn't frozen)
-        if (time_us_32() - last_heartbeat > 2000000) {
-            if (!radio_restarted) {
-                radio.restart();
-                radio_restarted = true;
-            }
-            last_heartbeat = time_us_32();
+        // Idle radio recovery: restart after 5 seconds with no activity
+        if (time_us_32() - last_radio_activity > 5000000) {
+            radio.restart();
+            last_radio_activity = time_us_32();
         }
     }
 

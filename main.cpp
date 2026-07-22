@@ -50,9 +50,9 @@ float r_accel = DEFAULT_R_ACCEL;
 // PID values (initialised from config defaults, tuneable at runtime)
 FlightMode current_flight_mode = MODE_ANGLE;
 
-float pid_p_roll_pitch_angle = DEFAULT_PID_P_ROLL_PITCH_ANGLE;
-float pid_i_roll_pitch_angle = DEFAULT_PID_I_ROLL_PITCH_ANGLE;
-float pid_d_roll_pitch_angle = DEFAULT_PID_D_ROLL_PITCH_ANGLE;
+float angle_strength = DEFAULT_ANGLE_STRENGTH;
+float angle_max_deg = DEFAULT_ANGLE_MAX_DEG;
+float angle_max_rate = DEFAULT_ANGLE_MAX_RATE;
 
 float rc_expo = DEFAULT_RC_EXPO;
 float rc_deadband = DEFAULT_RC_DEADBAND;
@@ -67,10 +67,6 @@ bool rc_yaw_reverse = DEFAULT_RC_YAW_REVERSE;
 float pid_p_roll_pitch_acro = DEFAULT_PID_P_ROLL_PITCH_ACRO;
 float pid_i_roll_pitch_acro = DEFAULT_PID_I_ROLL_PITCH_ACRO;
 float pid_d_roll_pitch_acro = DEFAULT_PID_D_ROLL_PITCH_ACRO;
-
-float pid_p_roll_pitch = DEFAULT_PID_P_ROLL_PITCH_ANGLE;
-float pid_i_roll_pitch = DEFAULT_PID_I_ROLL_PITCH_ANGLE;
-float pid_d_roll_pitch = DEFAULT_PID_D_ROLL_PITCH_ANGLE;
 float pid_p_yaw = DEFAULT_PID_P_YAW;
 float pid_i_yaw = DEFAULT_PID_I_YAW;
 float pid_d_yaw = DEFAULT_PID_D_YAW;
@@ -148,8 +144,8 @@ NRF24 radio(RADIO_SPI_PORT, RADIO_CE, RADIO_CSN, RADIO_SCK, RADIO_MOSI, RADIO_MI
 Buzzer fc_buzzer(BUZZER_PIN);
 
 // --- Initializing PID ---
-PIDController roll_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-PIDController pitch_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
+PIDController roll_pid(pid_p_roll_pitch_acro, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro);
+PIDController pitch_pid(pid_p_roll_pitch_acro, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro);
 PIDController yaw_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
 
 float roll_control_output = 0.0f, pitch_control_output = 0.0f, yaw_control_output = 0.0f;
@@ -349,18 +345,6 @@ int main() {
                     last_update_telemetry_us = current_time_telemetry_us;
                     
                     if (pids_updated_via_msp) {
-                        if (current_flight_mode == MODE_ACRO) {
-                            pid_p_roll_pitch_acro = pid_p_roll_pitch;
-                            pid_i_roll_pitch_acro = pid_i_roll_pitch;
-                            pid_d_roll_pitch_acro = pid_d_roll_pitch;
-                        } else {
-                            pid_p_roll_pitch_angle = pid_p_roll_pitch;
-                            pid_i_roll_pitch_angle = pid_i_roll_pitch;
-                            pid_d_roll_pitch_angle = pid_d_roll_pitch;
-                        }
-                        roll_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                        pitch_pid.set_pid(pid_p_roll_pitch, pid_i_roll_pitch, pid_d_roll_pitch);
-                        yaw_pid.set_pid(pid_p_yaw, pid_i_yaw, pid_d_yaw);
                         pids_updated_via_msp = false;
                         fc_buzzer.play_tone(2);
                     }

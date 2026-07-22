@@ -77,21 +77,30 @@ void NRF24::init() {
     spi_set_format(spi, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
     sleep_ms(100);
 
+    // Basic config: enable CRC, power up, set as PTX initially
     writeReg(CONFIG, 0x0A);
     sleep_ms(5);
 
+    // Flush FIFOs
     writeCmd(FLUSH_RX);
     writeCmd(FLUSH_TX);
 
-    writeReg(EN_AA, 0x03);
-    writeReg(0x02, 0x03);
+    // Enable Auto‑ACK on all data pipes (0‑5) for reliable delivery
+    writeReg(EN_AA, 0x3F);
+    // Enable RX addresses on pipes 0 and 1 (used for responses)
+    writeReg(EN_RXADDR, 0x03);
+    // Auto‑retransmit: 500 µs delay, 15 retries (max robustness)
     writeReg(SETUP_RETR, 0x2F);
+    // RF channel (chosen to avoid Wi‑Fi interference)
     writeReg(RF_CH, 76);
-    writeReg(RF_SETUP, 0x27);
+    // RF_SETUP: 1 Mbps data rate, 0 dBm output power, LNA gain off
+    writeReg(RF_SETUP, 0x06);
+    // Payload size for pipe 0 (response packets)
     writeReg(RX_PW_P0, 32);
-    writeReg(0x12, 32);
+    // Payload size for pipe 1 (future use)
+    writeReg(RX_PW_P1, 32);
 
-    // Disable dynamic features to enforce strict, clone-friendly standard operations
+    // Disable dynamic features to enforce strict, static payload handling
     writeReg(FEATURE, 0x00);
 }
 
@@ -227,7 +236,6 @@ bool NRF24::readCommand(RadioCommandPacket* data) {
 
     // --- AUTO-RECOVERY FIX ---
     if (data->header1 != CMD_HEADER_1 || data->header2 != CMD_HEADER_2) {
-        writeCmd(FLUSH_RX);
         return false;
     }
 
@@ -237,7 +245,6 @@ bool NRF24::readCommand(RadioCommandPacket* data) {
 
     if (calc_cs != data->checksum) {
         DEBUG_PRINT("[NRF24 ERROR] Command Checksum Mismatch!\n");
-        writeCmd(FLUSH_RX); // Flush to be safe
         return false;
     }
 
@@ -258,10 +265,6 @@ bool NRF24::sendResponse(RadioResponsePacket* data) {
     stopListening();
     _is_sending = true;
 
-    // Temporarily drop retries for responses to not block
-    uint8_t retr_bak = readReg(SETUP_RETR);
-    writeReg(SETUP_RETR, 0x00);
-
     csn_low();
     uint8_t cmd = TX_PAYLOAD;
     spi_write_blocking(spi, &cmd, 1);
@@ -275,7 +278,7 @@ bool NRF24::sendResponse(RadioResponsePacket* data) {
     while (true) {
         status = readReg(STATUS);
         if (status & 0x30) break;
-        if (time_us_32() - start_time > 5000) break;
+        if (time_us_32() - start_time > 25000) break;
     }
 
     ce_low();
@@ -283,7 +286,6 @@ bool NRF24::sendResponse(RadioResponsePacket* data) {
     writeReg(STATUS, 0x30);
     if (status & 0x10) writeCmd(FLUSH_TX);
 
-    writeReg(SETUP_RETR, retr_bak);
     startListening();
 
     _is_sending = false;
@@ -358,7 +360,6 @@ bool NRF24::readResponse(RadioResponsePacket* data) {
     memcpy(data, buffer, sizeof(RadioResponsePacket));
 
     if (data->header1 != RESP_HEADER_1 || data->header2 != RESP_HEADER_2) {
-        writeCmd(FLUSH_RX);
         return false;
     }
 
@@ -367,7 +368,6 @@ bool NRF24::readResponse(RadioResponsePacket* data) {
     for (size_t i = 0; i < sizeof(RadioResponsePacket) - 1; i++) calc_cs ^= ptr[i];
 
     if (calc_cs != data->checksum) {
-        writeCmd(FLUSH_RX);
         return false;
     }
 
@@ -387,7 +387,6 @@ bool NRF24::readTelemetry(TelemetryPacket* data) {
 
     // --- AUTO-RECOVERY FIX ---
     if (data->header1 != TELEMETRY_HEADER_1 || data->header2 != TELEMETRY_HEADER_2) {
-        writeCmd(FLUSH_RX);
         return false;
     }
 
@@ -396,7 +395,6 @@ bool NRF24::readTelemetry(TelemetryPacket* data) {
     for (size_t i = 0; i < sizeof(TelemetryPacket) - 1; i++) calc_cs ^= ptr[i];
 
     if (calc_cs != data->checksum) {
-        writeCmd(FLUSH_RX); // Flush to be safe
         return false;
     }
 

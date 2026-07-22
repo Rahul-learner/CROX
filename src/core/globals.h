@@ -21,17 +21,13 @@ extern float r_accel;
 
 extern FlightMode current_flight_mode;
 
-extern float pid_p_roll_pitch_angle;
-extern float pid_i_roll_pitch_angle;
-extern float pid_d_roll_pitch_angle;
+extern float angle_strength;
+extern float angle_max_deg;
+extern float angle_max_rate;
 
 extern float pid_p_roll_pitch_acro;
 extern float pid_i_roll_pitch_acro;
 extern float pid_d_roll_pitch_acro;
-
-extern float pid_p_roll_pitch;
-extern float pid_i_roll_pitch;
-extern float pid_d_roll_pitch;
 extern float pid_p_yaw;
 extern float pid_i_yaw;
 extern float pid_d_yaw;

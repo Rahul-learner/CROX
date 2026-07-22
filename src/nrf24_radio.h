@@ -63,6 +63,7 @@ private:
     // NRF24 Registers
     const uint8_t CONFIG = 0x00;
     const uint8_t EN_AA = 0x01;
+    const uint8_t EN_RXADDR = 0x02; // Enable RX addresses for pipes 0-5
     const uint8_t SETUP_RETR = 0x04;
     const uint8_t RF_CH = 0x05;
     const uint8_t RF_SETUP = 0x06;
@@ -70,6 +71,7 @@ private:
     const uint8_t RX_ADDR_P0 = 0x0A;
     const uint8_t TX_ADDR = 0x10;
     const uint8_t RX_PW_P0 = 0x11;
+    const uint8_t RX_PW_P1 = 0x12; // Payload size for pipe 1 (future use)
     const uint8_t FEATURE = 0x1D;
 
     inline void csn_low() { gpio_put(csn_pin, 0); asm volatile("nop \n nop \n nop"); }

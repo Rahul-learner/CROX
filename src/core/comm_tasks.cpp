@@ -27,8 +27,8 @@ void process_command(char* buffer) {
     else if (strncmp(buffer, "GET_PID_ACRO_RP", 15) == 0) {
         printf("PID_ACRO_RP,%f,%f,%f\n", pid_p_roll_pitch_acro, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro);
     }
-    else if (strncmp(buffer, "GET_PID_ANGLE_RP", 16) == 0) {
-        printf("PID_ANGLE_RP,%f,%f,%f\n", pid_p_roll_pitch_angle, pid_i_roll_pitch_angle, pid_d_roll_pitch_angle);
+    else if (strncmp(buffer, "GET_ANGLE_TUNE", 14) == 0) {
+        printf("ANGLE_TUNE,%f,%f,%f\n", angle_strength, angle_max_deg, angle_max_rate);
     }
     else if (strncmp(buffer, "GET_PID_YAW", 11) == 0) {
         printf("PID_YAW,%f,%f,%f\n", pid_p_yaw, pid_i_yaw, pid_d_yaw);
@@ -61,25 +61,11 @@ void process_command(char* buffer) {
     else if (strncmp(buffer, "PID_ACRO_RP,", 12) == 0) {
         sscanf(buffer, "PID_ACRO_RP,%f,%f,%f", &pid_p_roll_pitch_acro, &pid_i_roll_pitch_acro, &pid_d_roll_pitch_acro);
         DEBUG_PRINT("ACK PID_ACRO_RP: %f, %f, %f\n", pid_p_roll_pitch_acro, pid_i_roll_pitch_acro, pid_d_roll_pitch_acro);
+        pids_updated_via_msp = true;
     }
-    else if (strncmp(buffer, "PID_ANGLE_RP,", 13) == 0) {
-        sscanf(buffer, "PID_ANGLE_RP,%f,%f,%f", &pid_p_roll_pitch_angle, &pid_i_roll_pitch_angle, &pid_d_roll_pitch_angle);
-        DEBUG_PRINT("ACK PID_ANGLE_RP: %f, %f, %f\n", pid_p_roll_pitch_angle, pid_i_roll_pitch_angle, pid_d_roll_pitch_angle);
-    }
-    // Legacy PID_RP
-    else if (strncmp(buffer, "PID_RP,", 7) == 0) {
-        float kp, ki, kd;
-        sscanf(buffer, "PID_RP,%f,%f,%f", &kp, &ki, &kd);
-        if (current_flight_mode == MODE_ACRO) {
-            pid_p_roll_pitch_acro = kp;
-            pid_i_roll_pitch_acro = ki;
-            pid_d_roll_pitch_acro = kd;
-        } else {
-            pid_p_roll_pitch_angle = kp;
-            pid_i_roll_pitch_angle = ki;
-            pid_d_roll_pitch_angle = kd;
-        }
-        DEBUG_PRINT("ACK PID_RP: %f, %f, %f\n", kp, ki, kd);
+    else if (strncmp(buffer, "ANGLE_TUNE,", 11) == 0) {
+        sscanf(buffer, "ANGLE_TUNE,%f,%f,%f", &angle_strength, &angle_max_deg, &angle_max_rate);
+        DEBUG_PRINT("ACK ANGLE_TUNE: %f, %f, %f\n", angle_strength, angle_max_deg, angle_max_rate);
     }
     else if (strncmp(buffer, "PID_YAW,", 8) == 0) {
         sscanf(buffer, "PID_YAW,%f,%f,%f", &pid_p_yaw, &pid_i_yaw, &pid_d_yaw);
@@ -253,15 +239,15 @@ void process_radio_command(RadioCommandPacket* cmd, RadioResponsePacket* resp) {
             pid_d_roll_pitch_acro = ((int16_t*)cmd->payload)[2] / 1000.0f;
             resp->payload[0] = 0x01; // ACK
             break;
-        case 0x04: // GET_PID_ANGLE_RP
-            i16_p[0] = (int16_t)(pid_p_roll_pitch_angle * 1000.0f);
-            i16_p[1] = (int16_t)(pid_i_roll_pitch_angle * 1000.0f);
-            i16_p[2] = (int16_t)(pid_d_roll_pitch_angle * 1000.0f);
+        case 0x04: // GET_ANGLE_TUNE
+            i16_p[0] = (int16_t)(angle_strength * 1000.0f);
+            i16_p[1] = (int16_t)(angle_max_deg * 10.0f);
+            i16_p[2] = (int16_t)(angle_max_rate * 10.0f);
             break;
-        case 0x05: // SET_PID_ANGLE_RP
-            pid_p_roll_pitch_angle = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            pid_i_roll_pitch_angle = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            pid_d_roll_pitch_angle = ((int16_t*)cmd->payload)[2] / 1000.0f;
+        case 0x05: // SET_ANGLE_TUNE
+            angle_strength = ((int16_t*)cmd->payload)[0] / 1000.0f;
+            angle_max_deg = ((int16_t*)cmd->payload)[1] / 10.0f;
+            angle_max_rate = ((int16_t*)cmd->payload)[2] / 10.0f;
             resp->payload[0] = 0x01;
             break;
         case 0x06: // GET_PID_YAW
@@ -409,14 +395,6 @@ void process_radio_command(RadioCommandPacket* cmd, RadioResponsePacket* resp) {
             resp->payload[4] = USE_SD_CARD_LOGGING ? 1 : 0;
             resp->payload[5] = USE_NRF24_RADIO ? 1 : 0;
             break;
-        case 0xF0: // START_TELEMETRY
-            send_telemetry = true;
-            resp->payload[0] = 0x01;
-            break;
-        case 0xF1: // STOP_TELEMETRY
-            send_telemetry = false;
-            resp->payload[0] = 0x01;
-            break;
         default:
             break;
     }
@@ -445,68 +423,42 @@ void check_serial_commands() {
 void core1_entry() {
     multicore_lockout_victim_init();
 #if USE_NRF24_RADIO
-    uint32_t last_telemetry_time = time_us_32();
-    TelemetryPacket my_telemetry = {};
+    uint32_t last_radio_activity = time_us_32();
     RadioCommandPacket incoming_cmd = {};
     RadioResponsePacket outgoing_resp = {};
-    bool radio_restarted = false;
 #endif
 
     while (true) {
 
 #if USE_NRF24_RADIO
-        if (!send_telemetry && !radio_restarted) {
+        // Only restart radio after 5 seconds of inactivity (idle recovery)
+        if (time_us_32() - last_radio_activity > 5000000) {
             radio.restart();
-            radio_restarted = true;
+            last_radio_activity = time_us_32();
         }
 
         while (radio.dataAvailable()) {
-            radio_restarted = false;
-            DEBUG_PRINT("New Data Available!..");
-            fc_buzzer.play_tone(1);
-            sleep_ms(10); // Short tone for radio commands
-            fc_buzzer.stop();
-            
+            last_radio_activity = time_us_32();
+
             if (radio.readCommand(&incoming_cmd)) {
-                DEBUG_PRINT("NEW RADIO COMMAND PACKET RECEIVED! Cmd: %d\n", incoming_cmd.cmd_id);
+                DEBUG_PRINT("RADIO CMD: %d\n", incoming_cmd.cmd_id);
                 process_radio_command(&incoming_cmd, &outgoing_resp);
                 radio.sendResponse(&outgoing_resp);
-                
+
                 if (incoming_cmd.cmd_id == 0x1E) { // REBOOT
                     sleep_ms(100);
                     watchdog_reboot(0, 0, 0);
                 }
             }
         }
-
-        // Send Telemetry at 10Hz
-        uint32_t current_time = time_us_32();
-        if (send_telemetry && (current_time - last_telemetry_time > 100000)) {
-            radio_restarted = false;
-            last_telemetry_time = current_time;
-
-            // 1. PACKING TELEMETRY (Sending to Ground)
-            my_telemetry.roll      = (int16_t)(shared_roll * 100.0f);
-            my_telemetry.pitch     = (int16_t)(shared_pitch * 100.0f);
-            my_telemetry.yaw       = (int16_t)(shared_yaw * 100.0f);
-            my_telemetry.rc_roll   = (int16_t)(shared_rc_roll * 100.0f);
-            my_telemetry.rc_pitch  = (int16_t)(shared_rc_pitch * 100.0f);
-            my_telemetry.rc_yaw    = (int16_t)(shared_rc_yaw * 100.0f);
-            my_telemetry.pid_roll  = (int16_t)(shared_pid_roll * 100.0f);
-            my_telemetry.pid_pitch = (int16_t)(shared_pid_pitch * 100.0f);
-            my_telemetry.pid_yaw   = (int16_t)(shared_pid_yaw * 100.0f);
-            my_telemetry.dt_s     = (uint16_t)((current_time / 1000000.0f) * 100.0f);
-
-            radio.sendTelemetry(&my_telemetry);
-        }
 #endif
         check_serial_commands();
-        
+
         // Process SD Card Logging Queue
         extern Blackbox blackbox;
         blackbox.sd_logging_task();
-        
+
         // Tiny sleep to prevent Core 1 from aggressively locking the system bus
-        sleep_us(100); // Reduced to 100us so SD card logging queue doesn't back up
+        sleep_us(100);
     }
 }

@@ -9,7 +9,7 @@ pub struct TuningState {
     
     // PIDs (Base values)
     pub acro_p: f32, pub acro_i: f32, pub acro_d: f32,
-    pub angle_p: f32, pub angle_i: f32, pub angle_d: f32,
+    pub angle_strength: f32, pub angle_max_deg: f32, pub angle_max_rate: f32,
     pub yaw_p: f32, pub yaw_i: f32, pub yaw_d: f32,
     
     // Feed Forward
@@ -28,8 +28,8 @@ impl Default for TuningState {
     fn default() -> Self {
         Self {
             master_multiplier: 1.0,
-            acro_p: 1.5, acro_i: 0.5, acro_d: 0.05,
-            angle_p: 2.0, angle_i: 0.5, angle_d: 0.05,
+            acro_p: 7.2, acro_i: 0.5, acro_d: 0.05,
+            angle_strength: 5.0, angle_max_deg: 45.0, angle_max_rate: 300.0,
             yaw_p: 3.0, yaw_i: 1.0, yaw_d: 0.0,
             ff_roll: 0.0, ff_pitch: 0.0, ff_yaw: 0.0,
             tpa_breakpoint: 1350.0, tpa_factor: 0.3,
@@ -79,7 +79,7 @@ impl TuningState {
                 ui.vertical(|ui| {
                     ui.set_width(350.0);
                     panel_frame.show(ui, |ui| {
-                        ui.heading(egui::RichText::new("Acro Flight Mode").strong().color(egui::Color32::WHITE));
+                        ui.heading(egui::RichText::new("Rate PID (Acro / Inner Loop)").strong().color(egui::Color32::WHITE));
                         ui.separator();
                         ui.add_space(10.0);
                         ui.add(egui::Slider::new(&mut self.acro_p, 0.0..=15.0).text("Proportional"));
@@ -87,12 +87,12 @@ impl TuningState {
                         ui.add(egui::Slider::new(&mut self.acro_d, 0.0..=2.0).text("Derivative"));
                         ui.add_space(15.0);
                         
-                        ui.heading(egui::RichText::new("Angle Flight Mode").strong().color(egui::Color32::WHITE));
+                        ui.heading(egui::RichText::new("Angle Mode Tuning (Outer Loop)").strong().color(egui::Color32::WHITE));
                         ui.separator();
                         ui.add_space(10.0);
-                        ui.add(egui::Slider::new(&mut self.angle_p, 0.0..=15.0).text("Proportional"));
-                        ui.add(egui::Slider::new(&mut self.angle_i, 0.0..=10.0).text("Integral"));
-                        ui.add(egui::Slider::new(&mut self.angle_d, 0.0..=2.0).text("Derivative"));
+                        ui.add(egui::Slider::new(&mut self.angle_strength, 0.0..=15.0).text("Angle Strength"));
+                        ui.add(egui::Slider::new(&mut self.angle_max_deg, 10.0..=80.0).text("Max Angle (deg)"));
+                        ui.add(egui::Slider::new(&mut self.angle_max_rate, 50.0..=600.0).text("Max Rate (deg/s)"));
                         ui.add_space(15.0);
                         
                         ui.heading(egui::RichText::new("Yaw Configuration").strong().color(egui::Color32::WHITE));
@@ -161,7 +161,7 @@ impl TuningState {
         if let Some(port) = port_handle {
             let cmds = [
                 "GET_PID_ACRO_RP\n",
-                "GET_PID_ANGLE_RP\n",
+                "GET_ANGLE_TUNE\n",
                 "GET_PID_YAW\n",
                 "GET_FF\n",
                 "GET_TPA\n",
@@ -170,6 +170,7 @@ impl TuningState {
             ];
             for cmd in cmds {
                 let _ = port.write(cmd.as_bytes());
+                crate::log_event(&format!("TX: {}", cmd.trim()), crate::LogLevel::Tx);
                 std::thread::sleep(Duration::from_millis(15));
             }
             
@@ -188,11 +189,11 @@ impl TuningState {
                                     self.acro_d = d / self.master_multiplier;
                                 }
                             }
-                            "PID_ANGLE_RP" if parts.len() == 4 => {
-                                if let (Ok(p), Ok(i), Ok(d)) = (parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>()) {
-                                    self.angle_p = p / self.master_multiplier; 
-                                    self.angle_i = i / self.master_multiplier; 
-                                    self.angle_d = d / self.master_multiplier;
+                            "ANGLE_TUNE" if parts.len() == 4 => {
+                                if let (Ok(s), Ok(md), Ok(mr)) = (parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>()) {
+                                    self.angle_strength = s;
+                                    self.angle_max_deg = md;
+                                    self.angle_max_rate = mr;
                                 }
                             }
                             "PID_YAW" if parts.len() == 4 => {
@@ -218,7 +219,12 @@ impl TuningState {
                             "D_CUTOFF" if parts.len() == 2 => {
                                 if let Ok(dc) = parts[1].parse::<f32>() { self.d_cutoff_hz = dc; }
                             }
-                            _ => {}
+                            _ => {
+                                let raw_line = line.trim();
+                                if !raw_line.is_empty() {
+                                    crate::log_event(&format!("RX: {}", raw_line), crate::LogLevel::Rx);
+                                }
+                            }
                         }
                     }
                 }
@@ -230,7 +236,7 @@ impl TuningState {
         if let Some(port) = port_handle {
             let m = self.master_multiplier;
             let cmd_acro = format!("PID_ACRO_RP,{:.4},{:.4},{:.4}\n", self.acro_p * m, self.acro_i * m, self.acro_d * m);
-            let cmd_angle = format!("PID_ANGLE_RP,{:.4},{:.4},{:.4}\n", self.angle_p * m, self.angle_i * m, self.angle_d * m);
+            let cmd_angle = format!("ANGLE_TUNE,{:.4},{:.4},{:.4}\n", self.angle_strength, self.angle_max_deg, self.angle_max_rate);
             let cmd_yaw = format!("PID_YAW,{:.4},{:.4},{:.4}\n", self.yaw_p * m, self.yaw_i * m, self.yaw_d * m);
             let cmd_ff = format!("SET_FF,{:.4},{:.4},{:.4}\n", self.ff_roll, self.ff_pitch, self.ff_yaw);
             let cmd_tpa = format!("SET_TPA,{:.1},{:.3}\n", self.tpa_breakpoint, self.tpa_factor);
@@ -238,21 +244,34 @@ impl TuningState {
             let cmd_dcutoff = format!("SET_D_CUTOFF,{:.1}\n", self.d_cutoff_hz);
             
             let _ = port.write(cmd_acro.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_acro.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_angle.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_angle.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_yaw.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_yaw.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_ff.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_ff.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_tpa.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_tpa.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_ilimit.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_ilimit.trim()), crate::LogLevel::Tx);
+            
             let _ = port.write(cmd_dcutoff.as_bytes()); std::thread::sleep(Duration::from_millis(10));
+            crate::log_event(&format!("TX: {}", cmd_dcutoff.trim()), crate::LogLevel::Tx);
             
             // Write to config.h
             config_writer::update_config_define("DEFAULT_PID_P_ROLL_PITCH_ACRO", self.acro_p * m);
             config_writer::update_config_define("DEFAULT_PID_I_ROLL_PITCH_ACRO", self.acro_i * m);
             config_writer::update_config_define("DEFAULT_PID_D_ROLL_PITCH_ACRO", self.acro_d * m);
             
-            config_writer::update_config_define("DEFAULT_PID_P_ROLL_PITCH_ANGLE", self.angle_p * m);
-            config_writer::update_config_define("DEFAULT_PID_I_ROLL_PITCH_ANGLE", self.angle_i * m);
-            config_writer::update_config_define("DEFAULT_PID_D_ROLL_PITCH_ANGLE", self.angle_d * m);
+            config_writer::update_config_define("DEFAULT_ANGLE_STRENGTH", self.angle_strength);
+            config_writer::update_config_define("DEFAULT_ANGLE_MAX_DEG", self.angle_max_deg);
+            config_writer::update_config_define("DEFAULT_ANGLE_MAX_RATE", self.angle_max_rate);
             
             config_writer::update_config_define("DEFAULT_PID_P_YAW", self.yaw_p * m);
             config_writer::update_config_define("DEFAULT_PID_I_YAW", self.yaw_i * m);
