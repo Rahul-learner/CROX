@@ -18,9 +18,27 @@
 #endif
 #endif
 
+static uint32_t buzzer_off_time = 0;
+
+
 void process_command(char* buffer) {
     DEBUG_PRINT("Processing Command: %s\n", buffer);
     
+    bool is_set = (strncmp(buffer, "SET_", 4) == 0) ||
+                  (strncmp(buffer, "EKF,", 4) == 0) ||
+                  (strncmp(buffer, "PID_", 4) == 0 && strncmp(buffer, "PID_YAW", 7) != 0 && strncmp(buffer, "PID_ACRO_RP", 11) != 0) || // Exclude GET versions
+                  (strncmp(buffer, "PID_ACRO_RP,", 12) == 0) ||
+                  (strncmp(buffer, "PID_YAW,", 8) == 0) ||
+                  (strncmp(buffer, "ANGLE_TUNE,", 11) == 0) ||
+                  (strncmp(buffer, "BIAS,", 5) == 0) ||
+                  (strncmp(buffer, "CALIBRATE_", 10) == 0) ||
+                  (strncmp(buffer, "REBOOT", 6) == 0);
+
+    if (is_set) {
+        fc_buzzer.play_tone(2); // 2kHz tone for tuning changes
+        buzzer_off_time = time_us_32() + 150000; // 150ms beep
+    }
+
     if (strncmp(buffer, "GET_EKF", 7) == 0) {
         printf("EKF,%f,%f,%f\n", q_gyro, q_bias, r_accel);
     }
@@ -214,192 +232,6 @@ void process_command(char* buffer) {
     }
 }
 
-void process_radio_command(RadioCommandPacket* cmd, RadioResponsePacket* resp) {
-    resp->cmd_id = cmd->cmd_id;
-    memset(resp->payload, 0, sizeof(resp->payload));
-    
-    int16_t* i16_p = (int16_t*)resp->payload;
-    int32_t* i32_p = (int32_t*)resp->payload;
-    uint16_t* u16_p = (uint16_t*)resp->payload;
-    
-    switch (cmd->cmd_id) {
-        case 0x01: // GET_ATTITUDE
-            i16_p[0] = (int16_t)(roll * 100.0f);
-            i16_p[1] = (int16_t)(pitch * 100.0f);
-            i16_p[2] = (int16_t)(shared_yaw * 100.0f);
-            break;
-        case 0x02: // GET_PID_ACRO_RP
-            i16_p[0] = (int16_t)(pid_p_roll_pitch_acro * 1000.0f);
-            i16_p[1] = (int16_t)(pid_i_roll_pitch_acro * 1000.0f);
-            i16_p[2] = (int16_t)(pid_d_roll_pitch_acro * 1000.0f);
-            break;
-        case 0x03: // SET_PID_ACRO_RP
-            pid_p_roll_pitch_acro = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            pid_i_roll_pitch_acro = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            pid_d_roll_pitch_acro = ((int16_t*)cmd->payload)[2] / 1000.0f;
-            resp->payload[0] = 0x01; // ACK
-            break;
-        case 0x04: // GET_ANGLE_TUNE
-            i16_p[0] = (int16_t)(angle_strength * 1000.0f);
-            i16_p[1] = (int16_t)(angle_max_deg * 10.0f);
-            i16_p[2] = (int16_t)(angle_max_rate * 10.0f);
-            break;
-        case 0x05: // SET_ANGLE_TUNE
-            angle_strength = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            angle_max_deg = ((int16_t*)cmd->payload)[1] / 10.0f;
-            angle_max_rate = ((int16_t*)cmd->payload)[2] / 10.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x06: // GET_PID_YAW
-            i16_p[0] = (int16_t)(pid_p_yaw * 1000.0f);
-            i16_p[1] = (int16_t)(pid_i_yaw * 1000.0f);
-            i16_p[2] = (int16_t)(pid_d_yaw * 1000.0f);
-            break;
-        case 0x07: // SET_PID_YAW
-            pid_p_yaw = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            pid_i_yaw = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            pid_d_yaw = ((int16_t*)cmd->payload)[2] / 1000.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x08: // GET_EKF
-            i32_p[0] = (int32_t)(q_gyro * 1e6f);
-            i32_p[1] = (int32_t)(q_bias * 1e6f);
-            i32_p[2] = (int32_t)(r_accel * 1e6f);
-            break;
-        case 0x09: // SET_EKF
-            q_gyro = ((int32_t*)cmd->payload)[0] / 1e6f;
-            q_bias = ((int32_t*)cmd->payload)[1] / 1e6f;
-            r_accel = ((int32_t*)cmd->payload)[2] / 1e6f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x0A: // GET_BIAS
-            i16_p[0] = (int16_t)(bias_roll * 1000.0f);
-            i16_p[1] = (int16_t)(bias_pitch * 1000.0f);
-            i16_p[2] = (int16_t)(bias_yaw * 1000.0f);
-            break;
-        case 0x0B: // SET_BIAS
-            bias_roll = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            bias_pitch = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            bias_yaw = ((int16_t*)cmd->payload)[2] / 1000.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x0C: // GET_RC_TUNE
-            memcpy(resp->payload, &rc_expo, 4);
-            memcpy(resp->payload + 4, &rc_deadband, 4);
-            memcpy(resp->payload + 8, &rc_yaw_deadband, 4);
-            memcpy(resp->payload + 12, &rc_roll_center, 4);
-            memcpy(resp->payload + 16, &rc_pitch_center, 4);
-            memcpy(resp->payload + 20, &rc_yaw_center, 4);
-            resp->payload[24] = rc_roll_reverse ? 1 : 0;
-            resp->payload[25] = rc_pitch_reverse ? 1 : 0;
-            resp->payload[26] = rc_yaw_reverse ? 1 : 0;
-            break;
-        case 0x0D: // SET_RC_TUNE
-            memcpy(&rc_expo, cmd->payload, 4);
-            memcpy(&rc_deadband, cmd->payload + 4, 4);
-            memcpy(&rc_yaw_deadband, cmd->payload + 8, 4);
-            memcpy(&rc_roll_center, cmd->payload + 12, 4);
-            memcpy(&rc_pitch_center, cmd->payload + 16, 4);
-            memcpy(&rc_yaw_center, cmd->payload + 20, 4);
-            rc_roll_reverse = cmd->payload[24] > 0;
-            rc_pitch_reverse = cmd->payload[25] > 0;
-            rc_yaw_reverse = cmd->payload[26] > 0;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x0E: // GET_RC
-            i16_p[0] = (int16_t)raw_receiver_pwm[0];
-            i16_p[1] = (int16_t)raw_receiver_pwm[1];
-            i16_p[2] = (int16_t)raw_receiver_pwm[2];
-            i16_p[3] = (int16_t)raw_receiver_pwm[3];
-            i16_p[4] = (int16_t)receiver_pwm[0];
-            i16_p[5] = (int16_t)receiver_pwm[1];
-            i16_p[6] = (int16_t)receiver_pwm[2];
-            i16_p[7] = (int16_t)receiver_pwm[3];
-            break;
-        case 0x0F: // GET_STATUS
-            resp->payload[0] = is_armed ? 1 : 0;
-            resp->payload[1] = (uint8_t)current_flight_mode;
-            u16_p[1] = (uint16_t)loop_time_us;
-            break;
-        case 0x10: // GET_IMU
-            i16_p[0] = (int16_t)(shared_ax * 100.0f);
-            i16_p[1] = (int16_t)(shared_ay * 100.0f);
-            i16_p[2] = (int16_t)(shared_az * 100.0f);
-            i16_p[3] = (int16_t)(shared_gx * 100.0f);
-            i16_p[4] = (int16_t)(shared_gy * 100.0f);
-            i16_p[5] = (int16_t)(shared_gz * 100.0f);
-            break;
-        case 0x11: // SET_MODE
-            current_flight_mode = (FlightMode)cmd->payload[0];
-            resp->payload[0] = 0x01;
-            break;
-        case 0x12: // GET_MOTORS
-            if (global_motor_ptr) {
-                u16_p[0] = (uint16_t)global_motor_ptr->motor1_speed;
-                u16_p[1] = (uint16_t)global_motor_ptr->motor2_speed;
-                u16_p[2] = (uint16_t)global_motor_ptr->motor3_speed;
-                u16_p[3] = (uint16_t)global_motor_ptr->motor4_speed;
-            } else {
-                u16_p[0] = u16_p[1] = u16_p[2] = u16_p[3] = 1000;
-            }
-            break;
-        // 0x13 SET_MOTOR_TEST omitted for safety
-        case 0x14: // GET_FF
-            i16_p[0] = (int16_t)(ff_roll * 1000.0f);
-            i16_p[1] = (int16_t)(ff_pitch * 1000.0f);
-            i16_p[2] = (int16_t)(ff_yaw * 1000.0f);
-            break;
-        case 0x15: // SET_FF
-            ff_roll = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            ff_pitch = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            ff_yaw = ((int16_t*)cmd->payload)[2] / 1000.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x16: // GET_TPA
-            i16_p[0] = (int16_t)(tpa_breakpoint * 1000.0f);
-            i16_p[1] = (int16_t)(tpa_factor * 1000.0f);
-            break;
-        case 0x17: // SET_TPA
-            tpa_breakpoint = ((int16_t*)cmd->payload)[0] / 1000.0f;
-            tpa_factor = ((int16_t*)cmd->payload)[1] / 1000.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x18: // GET_I_LIMIT
-            i16_p[0] = (int16_t)(pid_integral_limit * 100.0f);
-            break;
-        case 0x19: // SET_I_LIMIT
-            pid_integral_limit = ((int16_t*)cmd->payload)[0] / 100.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x1A: // GET_D_CUTOFF
-            i16_p[0] = (int16_t)(pid_d_cutoff_hz * 100.0f);
-            break;
-        case 0x1B: // SET_D_CUTOFF
-            pid_d_cutoff_hz = ((int16_t*)cmd->payload)[0] / 100.0f;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x1C: // CALIBRATE_ACCEL
-            request_accel_calibration = true;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x1D: // CALIBRATE_NOISE
-            request_noise_calibration = true;
-            resp->payload[0] = 0x01;
-            break;
-        case 0x1E: // REBOOT
-            resp->payload[0] = 0x01;
-            break;
-        case 0x1F: // GET_CONFIG
-            u16_p[0] = CPU_FREQ_KHZ;
-            u16_p[1] = PWM_FREQUENCY_HZ;
-            resp->payload[4] = USE_SD_CARD_LOGGING ? 1 : 0;
-            resp->payload[5] = USE_NRF24_RADIO ? 1 : 0;
-            break;
-        default:
-            break;
-    }
-}
-
 // Non-blocking serial listener
 void check_serial_commands() {
     static char rx_buffer[128];
@@ -424,15 +256,24 @@ void core1_entry() {
     multicore_lockout_victim_init();
 #if USE_NRF24_RADIO
     uint32_t last_radio_activity = time_us_32();
-    RadioCommandPacket incoming_cmd = {};
-    RadioResponsePacket outgoing_resp = {};
+    TelemetryPacket outgoing_telemetry = {};
+    PIDTuningPacket incoming_pids = {};
+    AngleTuningPacket incoming_angle = {};
+    uint32_t last_telemetry_send = time_us_32();
 #endif
 
     while (true) {
 
+        // Auto-stop buzzer after its duration expires (works for both radio and serial)
+        if (buzzer_off_time > 0 && time_us_32() >= buzzer_off_time) {
+            fc_buzzer.stop();
+            buzzer_off_time = 0;
+        }
+
 #if USE_NRF24_RADIO
         // Only restart radio after 5 seconds of inactivity (idle recovery)
         if (time_us_32() - last_radio_activity > 5000000) {
+            DEBUG_PRINT("[DRONE] Radio idle for 5s, restarting NRF24...\n");
             radio.restart();
             last_radio_activity = time_us_32();
         }
@@ -440,16 +281,62 @@ void core1_entry() {
         while (radio.dataAvailable()) {
             last_radio_activity = time_us_32();
 
-            if (radio.readCommand(&incoming_cmd)) {
-                DEBUG_PRINT("RADIO CMD: %d\n", incoming_cmd.cmd_id);
-                process_radio_command(&incoming_cmd, &outgoing_resp);
-                radio.sendResponse(&outgoing_resp);
+            int pkt_type = radio.readCommand(&incoming_pids, &incoming_angle);
 
-                if (incoming_cmd.cmd_id == 0x1E) { // REBOOT
-                    sleep_ms(100);
-                    watchdog_reboot(0, 0, 0);
+            if (pkt_type == 1) { // PID Packet
+                if (incoming_pids.update_mask & 0x01) {
+                    pid_p_roll_pitch_acro = incoming_pids.kp_roll_pitch / 1000.0f;
+                    pid_i_roll_pitch_acro = incoming_pids.ki_roll_pitch / 1000.0f;
+                    pid_d_roll_pitch_acro = incoming_pids.kd_roll_pitch / 1000.0f;
+                    pids_updated_via_msp = true;
                 }
+                if (incoming_pids.update_mask & 0x02) {
+                    pid_p_yaw = incoming_pids.kp_yaw / 1000.0f;
+                    pid_i_yaw = incoming_pids.ki_yaw / 1000.0f;
+                    pid_d_yaw = incoming_pids.kd_yaw / 1000.0f;
+                }
+                if (incoming_pids.update_mask & 0x04) {
+                    bias_roll = incoming_pids.bias_roll / 1000.0f;
+                    bias_pitch = incoming_pids.bias_pitch / 1000.0f;
+                    bias_yaw = incoming_pids.bias_yaw / 1000.0f;
+                }
+                if (incoming_pids.update_mask & 0x08) {
+                    q_gyro = incoming_pids.q_gyro / 100000.0f;
+                    q_bias = incoming_pids.q_bias / 1000000.0f;
+                    r_accel = incoming_pids.r_accel / 100.0f;
+                }
+
+                fc_buzzer.play_tone(2); // 2kHz tone for tuning changes
+                buzzer_off_time = time_us_32() + 150000; // 150ms beep
+            } else if (pkt_type == 2) { // Angle Packet
+                angle_strength = incoming_angle.angle_strength / 1000.0f;
+                angle_max_deg = incoming_angle.angle_max_deg / 10.0f;
+                angle_max_rate = incoming_angle.angle_max_rate / 10.0f;
+                pids_updated_via_msp = true; // Signal outer loop that config changed
+
+                fc_buzzer.play_tone(3); // 3kHz tone for angle tuning changes
+                buzzer_off_time = time_us_32() + 150000; // 150ms beep
             }
+        }
+
+        if (send_telemetry && (time_us_32() - last_telemetry_send > 20000)) { // 50Hz telemetry
+            outgoing_telemetry.roll = (int16_t)(shared_roll * 100);
+            outgoing_telemetry.pitch = (int16_t)(shared_pitch * 100);
+            outgoing_telemetry.yaw = (int16_t)(shared_yaw * 100);
+            
+            outgoing_telemetry.rc_roll = (int16_t)(shared_rc_roll * 100);
+            outgoing_telemetry.rc_pitch = (int16_t)(shared_rc_pitch * 100);
+            outgoing_telemetry.rc_yaw = (int16_t)(shared_rc_yaw * 100);
+            
+            outgoing_telemetry.pid_roll = (int16_t)(shared_pid_roll * 100);
+            outgoing_telemetry.pid_pitch = (int16_t)(shared_pid_pitch * 100);
+            outgoing_telemetry.pid_yaw = (int16_t)(shared_pid_yaw * 100);
+            
+            outgoing_telemetry.dt_s = (uint16_t)(shared_dt_us / 10); // scaled by 100 
+            
+            radio.sendTelemetry(&outgoing_telemetry);
+            last_telemetry_send = time_us_32();
+            send_telemetry = false;
         }
 #endif
         check_serial_commands();

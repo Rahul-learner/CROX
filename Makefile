@@ -1,4 +1,4 @@
-.PHONY: all drone gs clean flash-drone flash-gs monitor plot
+.PHONY: all drone gs clean flash-drone flash-gs monitor monitor-gs plot
 
 all: drone gs
 
@@ -22,6 +22,9 @@ flash-gs: gs
 
 monitor:
 	cd configurator && cargo run --release
+
+monitor-gs:
+	cd GroundStation/gs_app && cargo run --release
 
 plot:
 	./scripts/.venv/bin/python scripts/read_blackbox_and_plot.py

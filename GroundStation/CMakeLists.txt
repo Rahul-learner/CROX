@@ -14,7 +14,6 @@ pico_sdk_init()
 
 add_executable(GroundStation
     main.cpp
-    ../src/nrf24_radio.cpp
 )
 
 pico_set_program_name(GroundStation "GroundStation")

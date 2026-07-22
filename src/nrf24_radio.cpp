@@ -3,6 +3,14 @@
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
+#ifndef DEBUG_PRINT
+#ifdef DEBUG_MODE
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+#endif
+
 void NRF24::writeReg(uint8_t reg, uint8_t value) {
     uint8_t buf[2] = {(uint8_t)(W_REG | reg), value};
     csn_low();
@@ -236,6 +244,8 @@ bool NRF24::readCommand(RadioCommandPacket* data) {
 
     // --- AUTO-RECOVERY FIX ---
     if (data->header1 != CMD_HEADER_1 || data->header2 != CMD_HEADER_2) {
+        DEBUG_PRINT("[NRF24 ERR] readCommand: bad header 0x%02X 0x%02X (expected 0x%02X 0x%02X)\n",
+                    data->header1, data->header2, CMD_HEADER_1, CMD_HEADER_2);
         return false;
     }
 
@@ -283,13 +293,19 @@ bool NRF24::sendResponse(RadioResponsePacket* data) {
 
     ce_low();
 
-    writeReg(STATUS, 0x30);
-    if (status & 0x10) writeCmd(FLUSH_TX);
+    if (status & 0x10) {
+        DEBUG_PRINT("[NRF24 ERR] sendResponse: MAX_RT hit, GS did not ACK\n");
+        writeCmd(FLUSH_TX);
+    }
 
     startListening();
 
     _is_sending = false;
-    return (status & 0x20) != 0;
+    bool ok = (status & 0x20) != 0;
+    if (!ok) {
+        DEBUG_PRINT("[NRF24 ERR] sendResponse: TX_DS not set (status=0x%02X)\n", status);
+    }
+    return ok;
 }
 
 // ==========================================================
@@ -360,6 +376,8 @@ bool NRF24::readResponse(RadioResponsePacket* data) {
     memcpy(data, buffer, sizeof(RadioResponsePacket));
 
     if (data->header1 != RESP_HEADER_1 || data->header2 != RESP_HEADER_2) {
+        DEBUG_PRINT("[NRF24 ERR] readResponse: bad header 0x%02X 0x%02X (expected 0x%02X 0x%02X)\n",
+                    data->header1, data->header2, RESP_HEADER_1, RESP_HEADER_2);
         return false;
     }
 
@@ -368,6 +386,7 @@ bool NRF24::readResponse(RadioResponsePacket* data) {
     for (size_t i = 0; i < sizeof(RadioResponsePacket) - 1; i++) calc_cs ^= ptr[i];
 
     if (calc_cs != data->checksum) {
+        DEBUG_PRINT("[NRF24 ERR] readResponse: checksum mismatch (calc=0x%02X, got=0x%02X)\n", calc_cs, data->checksum);
         return false;
     }
 

@@ -17,7 +17,7 @@
 #include "PID.h"
 #include "buzzer.h"
 #if USE_NRF24_RADIO
-#include "nrf24_radio.h"
+#include "nrf24_telemetry.h"
 #endif
 #include "blackbox.h"
 

@@ -4,7 +4,7 @@
 #include "EKF.h"
 #include "readIMU.h"
 #if USE_NRF24_RADIO
-#include "nrf24_radio.h"
+#include "nrf24_telemetry.h"
 #endif
 #include "buzzer.h"
 #include "PID.h"

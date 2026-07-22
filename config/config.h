@@ -7,7 +7,7 @@
 // SYSTEM
 // =============================================================================
 #define CPU_FREQ_KHZ 250000
-// #define DEBUG_MODE // Uncomment to enable debug printf
+#define DEBUG_MODE // Uncomment to enable debug printf
 #define CALIBRATION_SAMPLES 1000
 
 // =============================================================================

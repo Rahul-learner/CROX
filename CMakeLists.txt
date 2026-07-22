@@ -36,8 +36,6 @@ add_executable(CROX
     src/PwmIn.pio
     src/buzzer.cpp
     src/buzzer.h
-    src/nrf24_radio.cpp
-    src/nrf24_radio.h
     src/telemetry.cpp
     src/telemetry.h
     src/calibration.cpp

@@ -2,7 +2,7 @@
 #include "config.h"
 #include <stdint.h>
 #include "hardware/uart.h"
-#include "nrf24_radio.h"  // Unified TelemetryPacket lives here
+#include "nrf24_telemetry.h" // Provides TelemetryPacket definition
 
 // __attribute__((packed)) is critical here to prevent memory padding issues
 struct __attribute__((packed)) ConfigPacket {

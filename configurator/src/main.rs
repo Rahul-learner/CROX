@@ -57,7 +57,6 @@ fn main() -> eframe::Result<()> {
 pub enum ConnectionMode {
     Disconnected,
     DirectUSB,
-    GroundStation,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -239,18 +238,10 @@ impl eframe::App for ConfiguratorApp {
                             if let Ok(n) = port.read(&mut buf) {
                                 let resp = String::from_utf8_lossy(&buf[..n]);
                                 log_event(&format!("RX: {}", resp.trim()), LogLevel::Rx);
-                                if resp.contains("DEVICE_TYPE,GROUNDSTATION") {
-                                    self.connection_mode = ConnectionMode::GroundStation;
-                                    self.status_msg = "Connected (Ground Station)".to_string();
-                                    log_event("Detected Ground Station", LogLevel::Info);
-                                } else {
-                                    self.connection_mode = ConnectionMode::DirectUSB;
-                                    self.status_msg = "Connected (Direct USB)".to_string();
-                                    log_event("Detected Direct USB connection", LogLevel::Info);
-                                }
-                            } else {
-                                log_event("No response to probe, assuming Direct USB", LogLevel::Warn);
                             }
+                            self.connection_mode = ConnectionMode::DirectUSB;
+                            self.status_msg = "Connected (Direct USB)".to_string();
+                            log_event("Detected Direct USB connection", LogLevel::Info);
                         }
                         Err(e) => {
                             self.status_msg = format!("Auto-connect failed: {}", e);
@@ -320,14 +311,9 @@ impl eframe::App for ConfiguratorApp {
                                     let mut buf = [0u8; 1024];
                                     if let Ok(n) = port.read(&mut buf) {
                                         let resp = String::from_utf8_lossy(&buf[..n]);
-                                        if resp.contains("DEVICE_TYPE,GROUNDSTATION") {
-                                            self.connection_mode = ConnectionMode::GroundStation;
-                                            self.status_msg = "Connected (Ground Station)".to_string();
-                                        } else {
-                                            self.connection_mode = ConnectionMode::DirectUSB;
-                                            self.status_msg = "Connected (Direct USB)".to_string();
-                                        }
                                     }
+                                    self.connection_mode = ConnectionMode::DirectUSB;
+                                    self.status_msg = "Connected (Direct USB)".to_string();
                                     
                                     // Reset config fetch flag
                                     self.configuration_state.fetched = false;
@@ -519,36 +505,12 @@ impl eframe::App for ConfiguratorApp {
                 Tab::Setup => self.setup_state.ui(ui, &mut self.port),
                 Tab::Tuning => self.tuning_state.ui(ui, ctx, &mut self.port),
                 Tab::EKF => self.ekf_state.ui(ui, ctx, &mut self.port),
-                Tab::Blackbox => {
-                    if self.connection_mode == ConnectionMode::GroundStation {
-                        ui.heading("Blackbox — Disabled in Ground Station Mode");
-                        ui.label("Downloading blackbox data over the NRF24 radio is too slow and unsupported.");
-                        ui.label("Please connect the drone directly via USB to download Blackbox data.");
-                    } else {
-                        self.blackbox_state.ui(ui, &mut self.port);
-                    }
-                }
+                Tab::Blackbox => self.blackbox_state.ui(ui, &mut self.port),
                 Tab::Receiver => self.receiver_state.ui(ui, &mut self.port),
-                Tab::Motors => {
-                    if self.connection_mode == ConnectionMode::GroundStation {
-                        ui.heading("Motors — Disabled in Ground Station Mode");
-                        ui.label("Motor testing over radio is disabled for safety reasons.");
-                        ui.label("Please connect the drone directly via USB to test motors.");
-                    } else {
-                        self.motors_state.ui(ui, &mut self.port);
-                    }
-                }
+                Tab::Motors => self.motors_state.ui(ui, &mut self.port),
                 Tab::Modes => self.modes_state.ui(ui, &mut self.port),
                 Tab::Configuration => self.configuration_state.ui(ui, &mut self.port),
-                Tab::CLI => {
-                    if self.connection_mode == ConnectionMode::GroundStation {
-                        ui.heading("CLI — Disabled in Ground Station Mode");
-                        ui.label("Full CLI access over radio is not supported.");
-                        ui.label("Please connect the drone directly via USB to use CLI.");
-                    } else {
-                        self.cli_state.ui(ui, &mut self.port);
-                    }
-                }
+                Tab::CLI => self.cli_state.ui(ui, &mut self.port),
                 _ => {
                     ui.heading(format!("{} — Coming Soon", self.selected_tab.name()));
                     ui.label("This feature requires additional hardware not yet wired.");
